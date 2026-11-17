@@ -53,6 +53,44 @@ function M.test(name, fn)
   end
 end
 
+local stubs = {}
+
+--- Replace `tbl[key]` with `value` until `M.unstub()`.
+---@param tbl table
+---@param key string
+---@param value any
+function M.stub(tbl, key, value)
+  table.insert(stubs, { tbl = tbl, key = key, value = tbl[key] })
+  tbl[key] = value
+end
+
+--- Undo every `M.stub`, newest first.
+function M.unstub()
+  for i = #stubs, 1, -1 do
+    local s = stubs[i]
+    s.tbl[s.key] = s.value
+  end
+  stubs = {}
+end
+
+--- Make `vim.fn.stdpath("cache")` point at a fresh temporary directory, so tests never touch the
+--- user's real cache. Returns the directory.
+---@return string
+function M.isolate_cache()
+  local dir = vim.fn.tempname()
+  vim.fn.mkdir(dir, "p")
+  vim.env.XDG_CACHE_HOME = dir
+  return dir
+end
+
+--- Pump the event loop until `pred()` is true (or `ms` pass). Returns whether it became true.
+---@param pred fun(): boolean
+---@param ms? integer
+---@return boolean
+function M.wait_for(pred, ms)
+  return vim.wait(ms or 2000, pred, 10)
+end
+
 --- Print the summary and exit non-zero when anything failed.
 ---@param name string
 function M.finish(name)

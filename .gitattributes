@@ -1,0 +1,4 @@
+# Upstream code kept verbatim (see lua/render-markdown-images/vendor/README.md).
+# Marking it vendored keeps it out of the repository's language statistics and
+# collapses it in diffs, so review sees only what this project actually wrote.
+lua/render-markdown-images/vendor/** linguist-vendored

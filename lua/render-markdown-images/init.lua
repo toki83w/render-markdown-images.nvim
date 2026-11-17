@@ -15,6 +15,9 @@ local M = {}
 ---@param opts? table
 function M.setup(opts)
   require("render-markdown-images.config").setup(opts)
+  -- Only a loaded image module has decisions to forget; do not load it just for this.
+  local image = package.loaded["render-markdown-images.image"]
+  if image then image.setup() end
 end
 
 --- Handlers for render-markdown's `custom_handlers` option, keyed by treesitter language.

@@ -26,7 +26,10 @@ function M.defaults()
     enabled = "auto",
     images = { mode = "below" },
     diagrams = { mode = "below", mermaid = true, plantuml = true },
-    -- Opt-in remote PlantUML rendering, e.g. "https://www.plantuml.com/plantuml".
+    -- Unset on purpose. A PlantUML fence is rendered by a local `plantuml` or
+    -- `java -jar $PLANTUML_JAR` if there is one; naming a server here, e.g.
+    -- "https://www.plantuml.com/plantuml", is what allows the source of a diagram
+    -- to leave the machine, and nothing else turns that on.
     plantuml_server = nil,
   }
 end
