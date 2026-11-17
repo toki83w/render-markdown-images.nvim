@@ -349,7 +349,7 @@ end)
 h.test("a mermaid fence", function()
   local f = find { "text", "", "```mermaid", "graph TD", "  A --> B", "```", "", "more" }
   h.assert_eq(f.fences, {
-    { kind = "mermaid", source = "graph TD\n  A --> B", start_row = 2, end_row = 5, indent = 0 },
+    { kind = "mermaid", lang = "mermaid", source = "graph TD\n  A --> B", start_row = 2, end_row = 5, indent = 0 },
   }, "kind, source with inner indentation kept, opening and closing rows")
 end)
 
@@ -375,6 +375,17 @@ h.test("the language is case-insensitive", function()
     end, f.fences),
     { "mermaid", "plantuml", "plantuml" },
     "mixed case"
+  )
+end)
+
+h.test("the language is returned as written", function()
+  local f = find { "```Mermaid", "graph", "```", "", "```puml", "@startuml", "```" }
+  h.assert_eq(
+    vim.tbl_map(function(i)
+      return i.lang
+    end, f.fences),
+    { "Mermaid", "puml" },
+    "as typed"
   )
 end)
 
@@ -456,7 +467,7 @@ end)
 h.test("a fence in a list item: indent, and the list's prefix is removed from the source", function()
   local f = find { "- item", "  ```mermaid", "  graph TD", "    A --> B", "  ```", "", "after" }
   h.assert_eq(f.fences, {
-    { kind = "mermaid", source = "graph TD\n  A --> B", start_row = 1, end_row = 4, indent = 2 },
+    { kind = "mermaid", lang = "mermaid", source = "graph TD\n  A --> B", start_row = 1, end_row = 4, indent = 2 },
   }, "indent 2, content outdented by 2, deeper indentation kept")
 end)
 
@@ -478,7 +489,7 @@ end)
 h.test("a fence in a blockquote: markers are removed from the source", function()
   local f = find { "> ```mermaid", "> graph TD", ">   A --> B", "> ```" }
   h.assert_eq(f.fences, {
-    { kind = "mermaid", source = "graph TD\n  A --> B", start_row = 0, end_row = 3, indent = 2 },
+    { kind = "mermaid", lang = "mermaid", source = "graph TD\n  A --> B", start_row = 0, end_row = 3, indent = 2 },
   }, "quote prefix removed, inner indentation kept")
 end)
 

@@ -23,6 +23,7 @@
 
 ---@class render-markdown-images.FenceItem
 ---@field kind "mermaid"|"plantuml"
+---@field lang string the language as written after the fence: `Mermaid`, `puml`, ...
 ---@field source string the diagram, with the fence's list and quote prefix removed from every line
 ---@field start_row integer row of the opening fence
 ---@field end_row integer row of the closing fence
@@ -267,6 +268,7 @@ function M.fences(buf, root, opts)
       if source:match "%S" then
         items[#items + 1] = {
           kind = kind,
+          lang = vim.treesitter.get_node_text(c["diagram.lang"], buf),
           source = source,
           start_row = start_row,
           end_row = end_row,

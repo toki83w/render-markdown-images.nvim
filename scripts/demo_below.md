@@ -20,4 +20,26 @@ Two on one line: ![one](../tests/fixtures/demo_160x120.png) ![two](../tests/fixt
 
 A file that does not exist draws nothing: ![missing](nothing-here.png)
 
+## Diagrams
+
+A Mermaid fence is drawn under its source (needs `mmdr`, `mmdc` or `npx`):
+
+```mermaid
+graph LR
+    A[Edit] --> B[Render] --> C[Look]
+    C --> A
+```
+
+A PlantUML fence too (needs `plantuml`, or `java` with `$PLANTUML_JAR`):
+
+```plantuml
+@startuml
+Alice -> Bob: Hello
+Bob --> Alice: Hi
+@enduml
+```
+
+Without the tools nothing is drawn and the reason goes to
+`:lua print(require("render-markdown-images.log").path())`.
+
 The end.

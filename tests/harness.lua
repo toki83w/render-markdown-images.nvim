@@ -73,13 +73,16 @@ function M.unstub()
   stubs = {}
 end
 
---- Make `vim.fn.stdpath("cache")` point at a fresh temporary directory, so tests never touch the
---- user's real cache. Returns the directory.
+--- Make `vim.fn.stdpath("cache")` and `stdpath("state")` point at fresh temporary directories, so tests
+--- never touch the user's real cache or log. Returns the cache directory.
 ---@return string
 function M.isolate_cache()
   local dir = vim.fn.tempname()
   vim.fn.mkdir(dir, "p")
   vim.env.XDG_CACHE_HOME = dir
+  local state = vim.fn.tempname()
+  vim.fn.mkdir(state, "p")
+  vim.env.XDG_STATE_HOME = state
   return dir
 end
 

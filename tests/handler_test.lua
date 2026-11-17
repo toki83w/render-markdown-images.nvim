@@ -4,6 +4,8 @@
 
 package.path = vim.fn.getcwd() .. "/?.lua;" .. package.path
 local h = require "tests.harness"
+local support = require "tests.support"
+local make_png = support.make_png
 
 vim.opt.rtp:prepend(h.root) -- for the queries
 h.isolate_cache()
@@ -24,23 +26,17 @@ local placeholder = require "render-markdown-images.placeholder"
 local dir = vim.fn.tempname()
 vim.fn.mkdir(dir .. "/sub", "p")
 
---- A file with a valid PNG header for the given size. Enough for everything but a terminal.
----@param path string
----@param w integer
----@param h_ integer
-local function make_png(path, w, h_)
-  local function be32(n)
-    return string.char(math.floor(n / 16777216) % 256, math.floor(n / 65536) % 256, math.floor(n / 256) % 256, n % 256)
-  end
-  local f = assert(io.open(path, "wb"))
-  f:write("\137PNG\r\n\26\n", be32(13), "IHDR", be32(w), be32(h_), "\8\2\0\0\0", "\0\0\0\0")
-  f:close()
-end
-
 make_png(dir .. "/wide.png", 400, 200) -- 40 x 10 cells at 10x20 px
 make_png(dir .. "/small.png", 40, 20) -- 4 x 1 cells
 make_png(dir .. "/sub/other.png", 40, 40) -- 4 x 2 cells
 make_png(dir .. "/my pic.png", 40, 20)
+
+--- What render-markdown does at the start of a render: a new request context, here by clearing ours.
+---@param context table
+local function new_render(context)
+  context.rmi_images = nil
+  context.rmi_fences = nil
+end
 
 --- The fake render-markdown context in use, if any; every `run` is a new render and gets a fresh one.
 local fake_context ---@type table?
@@ -103,7 +99,7 @@ local function run(buf)
   end)
   local out = {}
   local handler = handlers.new().markdown_inline
-  if fake_context then fake_context.rmi_ready = nil end
+  if fake_context then new_render(fake_context) end
   for i, root in ipairs(roots) do
     vim.list_extend(out, handler.parse { buf = buf, root = root, last = i == #roots })
   end
@@ -484,7 +480,7 @@ h.test("with render-markdown's context the marks come with the last root only", 
     return store.stats().running == 0 and store.stats().queued == 0
   end)
   sleep(20)
-  context.rmi_ready = nil -- a new render
+  new_render(context)
   local parser = vim.treesitter.get_parser(buf, "markdown")
   local roots = {}
   parser:for_each_tree(function(tree, language_tree)
@@ -509,7 +505,7 @@ h.test("a new render starts a new collection", function()
     return store.peek(dir .. "/small.png") == "ready"
   end)
   h.assert_eq(#run(buf), 1, "first render: one mark")
-  context.rmi_ready = nil
+  new_render(context)
   h.assert_eq(#run(buf), 1, "a new context: one mark, not two")
   finish_test()
 end)

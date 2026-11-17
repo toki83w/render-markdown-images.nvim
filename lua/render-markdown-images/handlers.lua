@@ -1,7 +1,7 @@
 --- Glue between render-markdown.nvim's custom handler API and this plugin.
 ---
---- Both handlers extend the builtin ones. `markdown_inline` finds images, asks the store for them
---- and draws the ready ones below their lines; `markdown` is still empty (diagram fences come later).
+--- Both handlers extend the builtin ones. `markdown_inline` finds images and `markdown` finds Mermaid
+--- and PlantUML fences; both ask the store for them and draw the ready ones below their lines.
 ---
 --- A handler runs inside render-markdown's parse. It must be quick and must not wait: everything
 --- slow happens in the store, which renders the buffer again when something is ready.
@@ -13,11 +13,6 @@ local M = {}
 ---@class render-markdown-images.Handler
 ---@field extends boolean
 ---@field parse fun(ctx: { buf: integer, root: TSNode, last: boolean }): table[]
-
----@return table[]
-local function no_marks()
-  return {}
-end
 
 -- ============================================================================
 -- Where things are
@@ -78,32 +73,61 @@ function M.resolve_local(src, dir)
 end
 
 -- ============================================================================
--- markdown_inline
+-- Collecting and drawing
 -- ============================================================================
 
---- Images ready to draw, collected over the roots of one render.
+--- What is ready to draw, collected over the roots of one render.
+---
+--- It lives on render-markdown's request context, which is made afresh for every render, under `field`.
+--- Without that context each root is drawn on its own.
 ---@param context? table
+---@param field string
 ---@return render-markdown-images.Ready[] collected, boolean shared whether later roots add to it
-local function collector(context)
+local function collector(context, field)
   if not context then return {}, false end
-  context.rmi_ready = context.rmi_ready or {}
-  return context.rmi_ready, true
+  context[field] = context[field] or {}
+  return context[field], true
 end
+
+--- The marks for what has been collected, once the last root has added to it.
+---@param buf integer
+---@param context? table
+---@param ready render-markdown-images.Ready[]
+---@param shared boolean
+---@param last boolean whether this is the last root of the render
+---@return table[]
+local function draw(buf, context, ready, shared, last)
+  if shared and not last then return {} end
+  local win = render_window(context, buf)
+  if not win then return {} end
+  return require("render-markdown-images.marks").below(win, ready)
+end
+
+--- Whether the plugin should do anything for this buffer at all.
+---@param ctx { buf: integer, root: TSNode }
+---@return render-markdown-images.Config? config
+local function active(ctx)
+  local config = require("render-markdown-images.config").get()
+  if config.enabled == false or not ctx.root or not vim.api.nvim_buf_is_valid(ctx.buf) then return nil end
+  if not require("render-markdown-images.image").supports_kitty() then return nil end
+  return config
+end
+
+-- ============================================================================
+-- markdown_inline: images
+-- ============================================================================
 
 ---@param ctx { buf: integer, root: TSNode, last: boolean }
 ---@return table[]
 function M.parse_inline(ctx)
-  local config = require("render-markdown-images.config").get()
-  if config.enabled == false or not ctx.root or not vim.api.nvim_buf_is_valid(ctx.buf) then return {} end
+  if not active(ctx) then return {} end
   -- Below mode only, for now: `images.mode = "replace"` is drawn like "below".
   local image = require "render-markdown-images.image"
-  if not image.supports_kitty() then return {} end
-
   local discover = require "render-markdown-images.discover"
   local store = require "render-markdown-images.store"
 
   local context = request_context(ctx.buf)
-  local ready, shared = collector(context)
+  local ready, shared = collector(context, "rmi_images")
   local dir = base_dir(ctx.buf)
 
   for _, item in ipairs(discover.inline(ctx.buf, ctx.root)) do
@@ -127,16 +151,69 @@ function M.parse_inline(ctx)
 
   -- Every root of the render has added its images by the time of the last one, so images that share
   -- a row, in different table cells say, stack in one mark.
-  if shared and not ctx.last then return {} end
-  local win = render_window(context, ctx.buf)
-  if not win then return {} end
-  return require("render-markdown-images.marks").below(win, ready)
+  return draw(ctx.buf, context, ready, shared, ctx.last)
+end
+
+-- ============================================================================
+-- markdown: diagram fences
+-- ============================================================================
+
+--- Whether render-markdown conceals the closing fence of a block in this language.
+---
+--- With `code.border = "hide"`, its default, the fence lines are concealed whole, and Neovim drops the
+--- virtual lines of a concealed line. Reading the configuration is a bet on render-markdown's internals;
+--- when it cannot be read the default is assumed.
+---@param buf integer
+---@param lang string the language as written after the opening fence
+---@return boolean
+local function closing_fence_hidden(buf, lang)
+  local ok, code = pcall(function()
+    return require("render-markdown.state").get(buf).code
+  end)
+  if not ok or type(code) ~= "table" then return true end
+  if not code.enabled or code.border ~= "hide" then return false end
+  local disable = code.disable
+  if disable == true then return false end
+  return not (type(disable) == "table" and vim.tbl_contains(disable, lang))
+end
+
+---@param ctx { buf: integer, root: TSNode, last: boolean }
+---@return table[]
+function M.parse_fences(ctx)
+  local config = active(ctx)
+  if not config or not (config.diagrams.mermaid or config.diagrams.plantuml) then return {} end
+  local discover = require "render-markdown-images.discover"
+  local store = require "render-markdown-images.store"
+
+  local context = request_context(ctx.buf)
+  local ready, shared = collector(context, "rmi_fences")
+
+  for _, item in ipairs(discover.fences(ctx.buf, ctx.root)) do
+    if config.diagrams[item.kind] then
+      local key = store.diagram_key(item.kind, item.source)
+      local status, entry = store.get(key, ctx.buf, { kind = item.kind, source = item.source })
+      if status == "ready" then
+        ready[#ready + 1] = {
+          -- Under the closing fence. When that line is concealed it would take the image with it, so
+          -- the last line of the diagram's source is used: the image lands in the same place.
+          row = closing_fence_hidden(ctx.buf, item.lang) and item.end_row - 1 or item.end_row,
+          col = 0,
+          indent = item.indent,
+          id = entry.id,
+          w = entry.w,
+          h = entry.h,
+        }
+      end
+    end
+  end
+
+  return draw(ctx.buf, context, ready, shared, ctx.last)
 end
 
 ---@return table<string, render-markdown-images.Handler>
 function M.new()
   return {
-    markdown = { extends = true, parse = no_marks },
+    markdown = { extends = true, parse = M.parse_fences },
     markdown_inline = { extends = true, parse = M.parse_inline },
   }
 end

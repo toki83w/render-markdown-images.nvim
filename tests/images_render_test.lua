@@ -5,6 +5,8 @@
 
 package.path = vim.fn.getcwd() .. "/?.lua;" .. package.path
 local h = require "tests.harness"
+local support = require "tests.support"
+local make_png = support.make_png
 
 local rm_path = h.find_plugin("RENDER_MARKDOWN_PATH", "render-markdown.nvim")
 if not rm_path then
@@ -38,17 +40,6 @@ local ns = vim.api.nvim_create_namespace "render-markdown.nvim"
 local dir = vim.fn.tempname()
 vim.fn.mkdir(dir, "p")
 
----@param path string
----@param w integer
----@param h_ integer
-local function make_png(path, w, h_)
-  local function be32(n)
-    return string.char(math.floor(n / 16777216) % 256, math.floor(n / 65536) % 256, math.floor(n / 256) % 256, n % 256)
-  end
-  local f = assert(io.open(path, "wb"))
-  f:write("\137PNG\r\n\26\n", be32(13), "IHDR", be32(w), be32(h_), "\8\2\0\0\0", "\0\0\0\0")
-  f:close()
-end
 make_png(dir .. "/wide.png", 400, 200) -- 40 x 10 cells at 10 x 20 px
 make_png(dir .. "/small.png", 40, 20) -- 4 x 1
 make_png(dir .. "/tall.png", 40, 40) -- 4 x 2

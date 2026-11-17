@@ -933,4 +933,109 @@ h.test("completion renders through the default render_buf", function()
   finish_test()
 end)
 
+-- ============================================================================
+-- Log
+-- ============================================================================
+
+local log = require "render-markdown-images.log"
+
+h.test("a failed entry is written to the log once, however many attempts it took", function()
+  reset()
+  log.reset()
+  stub_produce(function(call)
+    call.done(nil, "renderer exploded")
+  end)
+  store.get "/broken.png"
+  h.assert_eq(wait_status("/broken.png", "failed"), true, "failed")
+  local lines = log.recent()
+  h.assert_eq(#lines, 1, "one line for four attempts")
+  h.assert_eq(lines[1]:find("file /broken.png: renderer exploded", 1, true) ~= nil, true, "kind, key and reason")
+  finish_test()
+end)
+
+h.test("different keys with the same cause are each written about", function()
+  reset()
+  log.reset()
+  stub_produce(function(call)
+    call.done(nil, "boom", true)
+  end)
+  store.get "/a.png"
+  store.get "/b.png"
+  wait_status("/a.png", "failed")
+  wait_status("/b.png", "failed")
+  h.assert_eq(#log.recent(), 2, "one each")
+  finish_test()
+end)
+
+h.test("a log_id makes one cause one line", function()
+  reset()
+  log.reset()
+  stub_produce(function(call)
+    call.done(nil, "no renderer for " .. call.key, true, "no renderer")
+  end)
+  store.get "/a.png"
+  store.get "/b.png"
+  store.get "/c.png"
+  wait_status("/a.png", "failed")
+  wait_status("/b.png", "failed")
+  wait_status("/c.png", "failed")
+  h.assert_eq(#log.recent(), 1, "one line for three entries")
+  finish_test()
+end)
+
+h.test("log_id = false keeps a refusal out of the log", function()
+  reset()
+  log.reset()
+  stub_produce(function(call)
+    call.done(nil, "not news", true, false)
+  end)
+  store.get "/a.png"
+  wait_status("/a.png", "failed")
+  h.assert_eq(log.recent(), {}, "nothing written")
+  h.assert_eq(select(2, store.get "/a.png").err, "not news", "but the entry says why")
+  finish_test()
+end)
+
+h.test("refusals are not failures: badges, GIFs, and a terminal without graphics are not logged", function()
+  reset()
+  log.reset()
+  stub_transmit()
+  stub_image { download_async = fixture }
+  run_default_produce "https://img.shields.io/badge/a-b-green.png"
+  run_default_produce "https://example.test/anim.gif"
+  run_default_produce "/local/clip.mp4"
+  image._set_kitty_supported(false)
+  run_default_produce(fixture)
+  h.assert_eq(log.recent(), {}, "none of them")
+  finish_test()
+end)
+
+h.test("real failures are logged: a missing file, a failed download, a missing tool", function()
+  reset()
+  log.reset()
+  stub_transmit()
+  run_default_produce "/no/such/file.png"
+  stub_image { download_async = false, has_mmdc = false, render_mermaid_async = fixture }
+  run_default_produce "https://example.test/pic.png"
+  run_default_produce(store.diagram_key("mermaid", "graph A"), { kind = "mermaid", source = "graph A" })
+  run_default_produce(store.diagram_key("mermaid", "graph B"), { kind = "mermaid", source = "graph B" })
+  local lines = log.recent()
+  h.assert_eq(#lines, 3, "three: the tool is missing for both diagrams, which is one cause")
+  h.assert_eq(lines[1]:find("file not found", 1, true) ~= nil, true, "the file")
+  h.assert_eq(lines[2]:find("download failed", 1, true) ~= nil, true, "the download")
+  h.assert_eq(lines[3]:find("no mermaid renderer", 1, true) ~= nil, true, "the tool")
+  finish_test()
+end)
+
+h.test("a ready entry writes nothing", function()
+  reset()
+  log.reset()
+  stub_produce()
+  stub_transmit()
+  store.get(fixture)
+  wait_status(fixture, "ready")
+  h.assert_eq(log.recent(), {}, "nothing")
+  finish_test()
+end)
+
 h.finish "store_test"

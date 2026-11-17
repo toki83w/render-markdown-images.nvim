@@ -39,6 +39,7 @@ local M = {}
 
 local uv = vim.uv or vim.loop
 local image = require "render-markdown-images.image"
+local log = require "render-markdown-images.log"
 
 --- Tunables. Fields may be changed at run time; tests do.
 M.limits = {
@@ -67,11 +68,13 @@ local renders = {}
 
 --- Make sure there is a local image file for `spec`.
 ---
---- `done(path)` on success, `done(nil, err, fatal)` otherwise; `fatal` means that trying again
---- cannot help.
+--- `done(path)` on success, `done(nil, err, fatal, log_id)` otherwise. `fatal` means that trying again
+--- cannot help. `log_id` names the cause for the log, which writes a cause once; without it the cause
+--- is the key, so that every image that fails is written about, but only once. `false` keeps it out of
+--- the log: the failure is not news.
 ---@param key string
 ---@param spec render-markdown-images.Spec
----@param done fun(path?: string, err?: string, fatal?: boolean)
+---@param done fun(path?: string, err?: string, fatal?: boolean, log_id?: string|false)
 function M.produce(key, spec, done)
   local kind = spec.kind
   if kind == "file" then
@@ -83,14 +86,21 @@ function M.produce(key, spec, done)
       done(nil, "download failed: " .. key)
     end)
   elseif kind == "mermaid" then
-    if not image.has_mmdc() then return done(nil, "no mermaid renderer (mmdr, mmdc or npx)", true) end
+    if not image.has_mmdc() then
+      return done(nil, "no mermaid renderer (mmdr, mmdc or npx) found", true, "no mermaid renderer")
+    end
     image.render_mermaid_async(spec.source, function(path)
       if path then return done(path) end
       done(nil, "mermaid rendering failed")
     end)
   elseif kind == "plantuml" then
     if not image.has_plantuml() then
-      return done(nil, "no plantuml renderer (plantuml, or a configured server)", true)
+      return done(
+        nil,
+        "no plantuml renderer (plantuml, java with $PLANTUML_JAR, or a server) found",
+        true,
+        "no plantuml renderer"
+      )
     end
     image.render_plantuml_async(spec.source, function(path)
       if path then return done(path) end
@@ -170,7 +180,8 @@ end
 ---@param ok boolean
 ---@param result table|string `{ id, w, h, path }` on success, the error otherwise
 ---@param fatal? boolean
-local function attempt_done(entry, ok, result, fatal)
+---@param log_id? string|false
+local function attempt_done(entry, ok, result, fatal, log_id)
   if entries[entry.key] ~= entry then return end -- the store was reset meanwhile
   if ok then
     ---@cast result table
@@ -184,6 +195,10 @@ local function attempt_done(entry, ok, result, fatal)
   elseif fatal or entry.attempts > M.limits.retries then
     entry.status, entry.err = "failed", tostring(result)
     entry.bufs = {} -- a failed entry draws nothing, so there is nothing to render again
+    -- Quietly: no message, just a line in the log, and one per cause.
+    if log_id ~= false then
+      log.warn(("%s %s: %s"):format(entry.spec.kind, entry.key, entry.err), log_id or entry.key)
+    end
   else
     entry.err = tostring(result)
     after(M.limits.retry_delay, function()
@@ -194,19 +209,23 @@ local function attempt_done(entry, ok, result, fatal)
   end
 end
 
---- The work for one entry. Answers through `settle(true, { id, w, h, path })` or `settle(false, err, fatal)`.
+--- The work for one entry. Answers through `settle(true, { id, w, h, path })` or
+--- `settle(false, err, fatal, log_id)`.
 ---@param entry render-markdown-images.Entry
----@param settle fun(ok: boolean, result: table|string, fatal?: boolean)
+---@param settle fun(ok: boolean, result: table|string, fatal?: boolean, log_id?: string|false)
 local function pipeline(entry, settle)
   local key, kind = entry.key, entry.spec.kind
-  if not image.supports_kitty() then return settle(false, "the terminal does not support Kitty graphics", true) end
-  if (kind == "file" or kind == "url") and image.is_unsupported_format(key) then
-    return settle(false, "unsupported format: " .. key, true)
+  -- These are refusals, not failures: nothing went wrong, so nothing is logged.
+  if not image.supports_kitty() then
+    return settle(false, "the terminal does not support Kitty graphics", true, false)
   end
-  if kind == "url" and image.is_badge_url(key) then return settle(false, "badge, not shown: " .. key, true) end
+  if (kind == "file" or kind == "url") and image.is_unsupported_format(key) then
+    return settle(false, "unsupported format: " .. key, true, false)
+  end
+  if kind == "url" and image.is_badge_url(key) then return settle(false, "badge, not shown: " .. key, true, false) end
 
-  M.produce(key, entry.spec, function(path, err, fatal)
-    if not path then return settle(false, err or "no image produced", fatal) end
+  M.produce(key, entry.spec, function(path, err, fatal, log_id)
+    if not path then return settle(false, err or "no image produced", fatal, log_id) end
     local w, h = image.image_dimensions(path)
     if not w then return settle(false, "not a readable PNG, JPEG or WebP: " .. path, true) end
     M.transmit(path, function(id, tx_w, tx_h)
@@ -225,13 +244,13 @@ local function start(entry)
   local settled = false
   local watchdog = assert(uv.new_timer())
 
-  local function finish(ok, result, fatal)
+  local function finish(ok, result, fatal, log_id)
     if settled then return end -- a late answer, after the timeout
     settled = true
     stop_timer(watchdog)
     if started_in ~= generation then return end -- the store was reset; this job is no longer counted
     running = running - 1
-    attempt_done(entry, ok, result, fatal)
+    attempt_done(entry, ok, result, fatal, log_id)
     schedule_pump()
   end
 
