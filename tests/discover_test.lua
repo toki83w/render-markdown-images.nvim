@@ -323,6 +323,14 @@ h.test("images in a pipe table are marked, and never alone", function()
   h.assert_eq(find({ "![x](x.png)" }).images[1].in_table, false, "ordinary images are not")
 end)
 
+h.test("an image in a table knows where the table ends", function()
+  local f = find { "intro", "", "| a | b |", "| - | - |", "| ![c](c.png) | x |", "| y | z |", "", "after ![d](d.png)" }
+  h.assert_eq(f.images[1].table_end_row, 5, "the last row of the table, not the row after it")
+  h.assert_eq(f.images[2].table_end_row, nil, "an image outside tables has none")
+  local at_end = find { "| a |", "| - |", "| ![c](c.png) |" }
+  h.assert_eq(at_end.images[1].table_end_row, 2, "a table that ends the document")
+end)
+
 h.test("a table inside a list item has the list's indent", function()
   local f = find { "- item", "", "  | a |", "  | - |", "  | ![c](c.png) |" }
   h.assert_eq(f.images[1].in_table, true, "in a table")

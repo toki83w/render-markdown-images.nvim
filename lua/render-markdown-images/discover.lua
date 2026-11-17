@@ -18,6 +18,7 @@
 ---@field end_col integer byte after its last character, on `end_row`
 ---@field alone_on_line boolean nothing but whitespace shares its lines with it (list and quote markers aside)
 ---@field in_table boolean inside a pipe table
+---@field table_end_row? integer last row of that table; only set when `in_table`
 ---@field indent integer display columns left of the block's content, from list and blockquote nesting
 
 ---@class render-markdown-images.FenceItem
@@ -183,6 +184,14 @@ function M.inline(buf, root, opts)
       end
       local after = line(end_row):sub(end_col + 1)
 
+      local in_table = block ~= nil and block:type() == "pipe_table"
+      local table_end_row ---@type integer?
+      if in_table then
+        local _, _, block_end_row, block_end_col = block:range()
+        -- A node that ends at the start of a line ends on the line before.
+        table_end_row = (block_end_col == 0 and block_end_row > block_row) and block_end_row - 1 or block_end_row
+      end
+
       items[#items + 1] = {
         kind = "image",
         src = src,
@@ -192,7 +201,8 @@ function M.inline(buf, root, opts)
         end_row = end_row,
         end_col = end_col,
         alone_on_line = before:match "^%s*$" ~= nil and after:match "^%s*$" ~= nil,
-        in_table = block ~= nil and block:type() == "pipe_table",
+        in_table = in_table,
+        table_end_row = in_table and table_end_row or nil,
         indent = block and display_width(line(block_row), content_col(line(block_row), block_col)) or 0,
       }
     end
