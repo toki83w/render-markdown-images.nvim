@@ -1,0 +1,16 @@
+# Compiled Lua sources
+luac.out
+
+# Vim
+[._]*.s[a-v][a-z]
+[._]*.sw[a-p]
+Session.vim
+*~
+doc/tags
+
+# Editors / OS
+.DS_Store
+.claude/
+
+# Python bytecode from helper scripts
+__pycache__/
