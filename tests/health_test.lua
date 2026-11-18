@@ -33,6 +33,7 @@ local log = require "render-markdown-images.log"
 ---@field termguicolors? boolean
 ---@field ambiwidth? string
 ---@field tools? string[] the executables that exist
+---@field formats? string[]|false the formats magick reads (false: it could not be asked)
 ---@field render_markdown? "missing"|"not_set_up"|"registered"|"no_extends"|"foreign"|"unregistered"
 ---@field can_replace? boolean
 ---@field snacks? false|{ enabled?: boolean, doc?: boolean }|"broken"
@@ -52,7 +53,7 @@ local function run_check(opts)
     features = "256,RGB,usstyle,sync",
     termguicolors = true,
     ambiwidth = "single",
-    tools = { "curl", "ffmpeg", "magick", "mmdr", "plantuml" },
+    tools = { "curl", "magick", "mmdr", "plantuml" },
     render_markdown = "registered",
     can_replace = true,
     snacks = false,
@@ -88,6 +89,15 @@ local function run_check(opts)
     end
     if answer == false then return nil end -- a query that failed
     return answer
+  end)
+
+  h.stub(health, "_magick_formats", function()
+    if opts.formats == false then return nil end -- magick could not be asked
+    local formats = {}
+    for _, name in ipairs(opts.formats or { "JPEG", "WEBP", "BMP", "TIFF", "SVG", "PNG" }) do
+      formats[name] = true
+    end
+    return formats
   end)
 
   vim.o.termguicolors = opts.termguicolors
@@ -378,49 +388,93 @@ end)
 -- ============================================================================
 
 h.test("curl missing: remote images are not downloaded", function()
-  local r = run_check { tools = { "ffmpeg", "mmdr", "plantuml" } }
+  local r = run_check { tools = { "magick", "mmdr", "plantuml" } }
   local w = has(r, "warn", "curl not found")
   h.assert_eq(w ~= false, true, "warning")
   h.assert_eq(advises(w, "set_download_fn"), true, "mentions the way around it")
 end)
 
-h.test("neither ffmpeg nor magick: JPEG and WebP are not shown", function()
+h.test("no magick: JPEG and WebP are not shown, and the warning says which magick", function()
   local r = run_check { tools = { "curl", "mmdr", "plantuml" } }
-  if vim.fn.has "mac" == 0 then h.assert_eq(has(r, "warn", "neither ffmpeg nor magick") ~= false, true, "warning") end
+  local w = has(r, "warn", "magick not found")
+  h.assert_eq(w ~= false, true, "warning")
+  h.assert_eq(advises(w, "ImageMagick 7"), true, "names the version that has the command")
   r = run_check { tools = { "curl", "magick", "mmdr", "plantuml" } }
-  h.assert_eq(has(r, "warn", "neither ffmpeg nor magick"), false, "one of them is enough")
+  h.assert_eq(has(r, "warn", "magick not found"), false, "no warning when it is there")
+end)
+
+h.test("magick that cannot read a format: it is named, with what to do", function()
+  local r = run_check { formats = { "JPEG", "BMP", "PNG" } }
+  local w = has(r, "warn", "magick cannot read")
+  h.assert_eq(w ~= false, true, "warning")
+  h.assert_eq(
+    w.msg:find("WEBP", 1, true) ~= nil and w.msg:find("TIFF", 1, true) ~= nil and w.msg:find("SVG", 1, true) ~= nil,
+    true,
+    "names the missing formats"
+  )
+  h.assert_eq(w.msg:find("JPEG", 1, true) == nil and w.msg:find("BMP", 1, true) == nil, true, "and only those")
+  h.assert_eq(advises(w, "magick -list format"), true, "says how to look")
+  r = run_check {}
+  h.assert_eq(has(r, "warn", "magick cannot read"), false, "no warning when it reads all of them")
+  h.assert_eq(has(r, "ok", "magick reads JPEG, WebP, BMP, TIFF and SVG") ~= false, true, "and says so")
+  r = run_check { formats = false }
+  h.assert_eq(has(r, "warn", "magick cannot read"), false, "magick that cannot be asked is not blamed")
+end)
+
+h.test("`magick -list format` is read for the modes that mean readable", function()
+  local out = table.concat({
+    "   Format  Module    Mode  Description",
+    "-------------------------------------------------------------------------------",
+    "      BMP* BMP       rw-   Microsoft Windows bitmap image",
+    "     JPEG* JPEG      rw-   Joint Photographic Experts Group JFIF format",
+    "      SVG  SVG       -w+   Scalable Vector Graphics",
+    "     MSVG  SVG       rw+   ImageMagick's own SVG internal renderer",
+    "     WEBP* WEBP      rw+   WebP Image Format (libwebp 1.6.0 [0210])",
+  }, "\n")
+  h.stub(vim, "system", function()
+    return {
+      wait = function()
+        return { code = 0, stdout = out }
+      end,
+    }
+  end)
+  local formats = health._magick_formats()
+  h.unstub()
+  h.assert_eq(formats.BMP and formats.JPEG and formats.WEBP and formats.MSVG, true, "readable ones")
+  h.assert_eq(formats.SVG, nil, "SVG that can only be written is not readable")
+  h.assert_eq(formats.Format, nil, "the header is not a format")
 end)
 
 h.test("Mermaid: the renderer found is named; none found is a warning", function()
   h.assert_eq(
-    has(run_check { tools = { "curl", "ffmpeg", "mmdc", "plantuml" } }, "ok", "Mermaid diagrams: mmdc") ~= false,
+    has(run_check { tools = { "curl", "magick", "mmdc", "plantuml" } }, "ok", "Mermaid diagrams: mmdc") ~= false,
     true,
     "mmdc"
   )
   h.assert_eq(
-    has(run_check { tools = { "curl", "ffmpeg", "npx", "plantuml" } }, "ok", "Mermaid diagrams: npx") ~= false,
+    has(run_check { tools = { "curl", "magick", "npx", "plantuml" } }, "ok", "Mermaid diagrams: npx") ~= false,
     true,
     "npx"
   )
   h.assert_eq(
-    has(run_check { tools = { "curl", "ffmpeg", "mmdr", "mmdc", "npx", "plantuml" } }, "ok", "Mermaid diagrams: mmdr")
+    has(run_check { tools = { "curl", "magick", "mmdr", "mmdc", "npx", "plantuml" } }, "ok", "Mermaid diagrams: mmdr")
       ~= false,
     true,
     "mmdr first, as when rendering"
   )
-  local r = run_check { tools = { "curl", "ffmpeg", "plantuml" } }
+  local r = run_check { tools = { "curl", "magick", "plantuml" } }
   h.assert_eq(has(r, "warn", "no Mermaid renderer found") ~= false, true, "none: warning")
 end)
 
 h.test("PlantUML: none is a warning that names the ways out", function()
-  local r = run_check { tools = { "curl", "ffmpeg", "mmdr" } }
+  local r = run_check { tools = { "curl", "magick", "mmdr" } }
   local w = has(r, "warn", "no PlantUML renderer")
   h.assert_eq(w ~= false, true, "warning")
   h.assert_eq(advises(w, "PLANTUML_JAR") and advises(w, "plantuml_server"), true, "the jar, and a server")
 end)
 
 h.test("a kind of diagram that is turned off is not warned about", function()
-  local r = run_check { tools = { "curl", "ffmpeg" }, config = { diagrams = { mermaid = false, plantuml = false } } }
+  local r = run_check { tools = { "curl", "magick" }, config = { diagrams = { mermaid = false, plantuml = false } } }
   h.assert_eq(has(r, "info", "Mermaid diagrams are turned off") ~= false, true, "Mermaid: information")
   h.assert_eq(has(r, "info", "PlantUML diagrams are turned off") ~= false, true, "PlantUML: information")
   h.assert_eq(has(r, "warn", "renderer"), false, "no warning about renderers")

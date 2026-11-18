@@ -55,7 +55,8 @@ REQUIREMENTS                             *render-markdown-images-requirements*
   See |render-markdown-images-tmux|.
 - Optional tools, each for one kind of source:
     remote images	`curl`
-    JPEG and WebP	`ffmpeg` or `magick` (`sips` on macOS)
+    JPEG, WebP, BMP, TIFF and SVG
+			`magick` (ImageMagick 7)
     Mermaid		`mmdr`, `mmdc` (mermaid-cli), or `npx`
     PlantUML		`plantuml`, or `java` with $PLANTUML_JAR, or
 			the option `plantuml_server`
@@ -173,9 +174,16 @@ mermaid, plantuml and puml fences
 	|:colorscheme| or 'background' change them.  PlantUML with `plantuml`,
 	or `java -jar $PLANTUML_JAR`, or the `plantuml_server`.
 
-PNG is sent as it is; JPEG and WebP are converted to PNG (at most 2000 px) and
-the result is cached.  Badges (`img.shields.io`, ...), GIFs, videos and other
-schemes (`data:`, `mailto:`, ...) are left alone.
+PNG is sent as it is; JPEG, WebP, BMP, TIFF and SVG are converted to PNG by
+`magick` (at most 2000 px) and the result is cached.  The format is told by
+the first bytes of the file, not by its name.  An animated WebP and a
+multi-page TIFF show their first frame or page.  An SVG is drawn on a white
+background (it has none of its own, and black lines would vanish on a dark
+terminal) at twice its own size, and an SVG that points at anything outside
+itself (`<image href="file:///...">`, `url(http://...)`, an entity, a
+stylesheet) is not drawn at all: only links to `#id` and embedded PNG, JPEG,
+GIF and WebP data are accepted.  Badges (`img.shields.io`, ...), GIFs, videos
+and other schemes (`data:`, `mailto:`, ...) are left alone.
 
 Size: the width of the window's text area (less the number column, sign
 column and so on) less the indent of the list or quote the image is in, at
@@ -240,6 +248,16 @@ support.
 Images twice ~
 snacks.nvim draws them in documents too; set
 `image = { doc = { enabled = false } }` there.
+
+JPEG, WebP, BMP, TIFF and SVG images stay as their source ~
+`magick` is not found, or cannot read that format.  It is the command of
+ImageMagick 7; the `imagemagick` package of Debian and Ubuntu is version 6,
+which has only `convert` and is not used.  Install ImageMagick 7 (Homebrew has
+it on macOS), and check that it was built with the library for the format
+(`magick -list format`: libwebp for WebP, librsvg or its own renderer for
+SVG); |render-markdown-images-health| lists what it cannot read.  An SVG that
+points at files or addresses outside itself is refused on purpose: the log
+says so.
 
 A paragraph is missing its render-markdown decoration now and then ~
 Seen with render-markdown alone on Neovim 0.12.3: after partial treesitter

@@ -1,7 +1,7 @@
 --- Image display support for render-markdown-images.nvim.
 --- Copied from the toki83w fork of delphinus/md-render.nvim (MIT); see the README's credits.
 --- Uses Kitty Graphics Protocol to display images in terminal.
---- Supports PNG, JPEG, and WebP formats.
+--- Shows PNG, JPEG, WebP, BMP, TIFF and SVG; all but PNG are converted by ImageMagick first.
 ---
 --- Images are drawn as Unicode placeholders only (see placeholder.lua), inside
 --- tmux and out of it:
@@ -289,6 +289,100 @@ function M.image_dimensions(path)
   if h:byte(1) == 0xFF and h:byte(2) == 0xD8 then return jpeg_dimensions(path) end
   if h:sub(1, 4) == "RIFF" then return webp_dimensions(path) end
   return nil
+end
+
+--- The format of a file, told by its first bytes and never by its name: "png", "jpeg", "webp", "bmp", "tiff",
+--- "svg", or nil for anything else (a GIF, a PDF, a page that a server answered instead of an image, ...).
+---@param path string
+---@return "png"|"jpeg"|"webp"|"bmp"|"tiff"|"svg"|nil
+function M.detect_format(path)
+  local h = read_header(path, 4096)
+  if not h or #h < 4 then return nil end
+  if h:sub(1, 4) == "\137PNG" then return "png" end
+  if h:byte(1) == 0xFF and h:byte(2) == 0xD8 then return "jpeg" end
+  if h:sub(1, 4) == "RIFF" then return h:sub(9, 12) == "WEBP" and "webp" or nil end
+  local magic = h:sub(1, 4)
+  -- Classic TIFF and BigTIFF, in both byte orders.
+  if magic == "II*\0" or magic == "MM\0*" or magic == "II+\0" or magic == "MM\0+" then return "tiff" end
+  -- "BM" is two letters any text could start with; the size of the DIB header after it is what makes it a bitmap.
+  if h:sub(1, 2) == "BM" and #h >= 18 then
+    local dib = h:byte(15) + h:byte(16) * 256 + h:byte(17) * 65536 + h:byte(18) * 16777216
+    if dib == 12 or dib == 40 or dib == 52 or dib == 56 or dib == 64 or dib == 108 or dib == 124 then return "bmp" end
+    return nil
+  end
+  -- SVG is text: after a BOM, blanks, an XML declaration, comments and a doctype, the first element is <svg>.
+  -- (An HTML page with an SVG in it is a page, not a picture.)
+  local text = h:gsub("^\239\187\191", "")
+  while true do
+    text = text:gsub("^%s+", "")
+    local rest
+    if text:sub(1, 2) == "<?" then
+      rest = text:match "^<%?.-%?>(.*)$"
+    elseif text:sub(1, 4) == "<!--" then
+      rest = text:match "^<!%-%-.-%-%->(.*)$"
+    elseif text:sub(1, 9):upper() == "<!DOCTYPE" then
+      -- a doctype may carry an internal subset in brackets, which has `>` in it
+      rest = text:match "^<![Dd][Oo][Cc][Tt][Yy][Pp][Ee][^%[>]*%[.-%]%s*>(.*)$"
+        or text:match "^<![Dd][Oo][Cc][Tt][Yy][Pp][Ee][^>]*>(.*)$"
+    end
+    if not rest then break end
+    text = rest
+  end
+  if text:find "^<svg[%s>/]" then return "svg" end
+  return nil
+end
+
+--- The largest SVG file that is looked at.
+local MAX_SVG_BYTES = 5 * 1024 * 1024
+
+--- Why an SVG must not be handed to ImageMagick, or nil if it may. An SVG can name other files and addresses
+--- (`<image href="file:///etc/passwd">`, `url(http://...)`, an entity or a stylesheet that does), and the renderer
+--- would draw what it finds into a picture. So an SVG that points at anything but itself is refused: links to
+--- `#id` and embedded PNG, JPEG, GIF and WebP data are all it may have.
+---@param path string
+---@return string? reason
+function M.svg_refusal(path)
+  local stat = uv.fs_stat(path)
+  if not stat then return "cannot be read" end
+  if stat.size > MAX_SVG_BYTES then return "is larger than " .. (MAX_SVG_BYTES / 1024 / 1024) .. " MB" end
+  local f = io.open(path, "rb")
+  if not f then return "cannot be read" end
+  local text = f:read "*a" or ""
+  f:close()
+  local s = text:lower()
+
+  if s:find("<!entity", 1, true) then return "defines entities" end
+  if s:find("<?xml-stylesheet", 1, true) or s:find("@import", 1, true) then return "imports a stylesheet" end
+
+  local function allowed(value)
+    value = vim.trim(value)
+    return value == ""
+      or value:sub(1, 1) == "#"
+      or value:find "^data:image/png[;,]" ~= nil
+      or value:find "^data:image/jpe?g[;,]" ~= nil
+      or value:find "^data:image/gif[;,]" ~= nil
+      or value:find "^data:image/webp[;,]" ~= nil
+  end
+  for _, attr in ipairs { "href", "src" } do
+    for value in s:gmatch("[%s:\"']" .. attr .. "%s*=%s*[\"']([^\"']*)[\"']") do
+      if not allowed(value) then
+        return "points at something outside itself (" .. attr .. "=" .. value:sub(1, 40) .. ")"
+      end
+    end
+  end
+  for value in s:gmatch "url%(%s*([^)]*)%)" do
+    local inner = vim.trim(value):gsub("^[\"']", "")
+    if not allowed(inner) then return "points at something outside itself (url(" .. inner:sub(1, 40) .. "))" end
+  end
+  return nil
+end
+
+--- Formats that ImageMagick turns into a PNG for us: everything but PNG that is displayed.
+---@param path string
+---@return boolean
+function M.is_convertible_format(path)
+  local kind = M.detect_format(path)
+  return kind ~= nil and kind ~= "png"
 end
 
 --- Extensions of formats this plugin cannot display: GIF and video.
@@ -1100,19 +1194,13 @@ end
 -- Image conversion tool detection
 -- ============================================================================
 
---- Detect the best available tool for static image conversion (JPEG/WebP → PNG).
---- Priority: sips (macOS) → ffmpeg → magick
----@return string? tool  "sips", "ffmpeg", or "magick"
+--- Detect the tool for static image conversion (JPEG, WebP, BMP, TIFF, SVG → PNG): ImageMagick 7's `magick`.
+--- (ImageMagick 6 only has `convert`, which is not looked for.)
+---@return string? tool  "magick", or nil when it is not installed
 local function find_convert_tool()
   if _convert_checked then return _convert_cmd end
   _convert_checked = true
-  if vim.fn.has "mac" == 1 and vim.fn.executable "sips" == 1 then
-    _convert_cmd = "sips"
-  elseif vim.fn.executable "ffmpeg" == 1 then
-    _convert_cmd = "ffmpeg"
-  elseif vim.fn.executable "magick" == 1 then
-    _convert_cmd = "magick"
-  end
+  if vim.fn.executable "magick" == 1 then _convert_cmd = "magick" end
   return _convert_cmd
 end
 
@@ -1120,33 +1208,43 @@ end
 --- Larger source images are downscaled to fit within this bound.
 local MAX_CONVERT_DIM = 2000
 
---- Build a command to convert a static image to PNG with resize.
----@param tool string  "sips", "ffmpeg", or "magick"
+--- Resource limits for one conversion, so that a file that asks for gigabytes or for ever does not get them.
+local CONVERT_LIMITS = { "-limit", "time", "30", "-limit", "memory", "1GiB", "-limit", "map", "1GiB" }
+
+--- The pixels per inch an SVG is drawn at: 96 is its own unit, doubled for sharpness on a screen.
+local SVG_DENSITY = "192"
+
+--- Build the command that converts a static image to PNG, no larger than MAX_CONVERT_DIM.
+---
+--- The format found by `detect_format` is given to ImageMagick as a prefix (`svg:file`), so that it reads the
+--- file as that format and not as whatever else the file might pass for. `[0]` takes the first frame or page only:
+--- an animated WebP or a multi-page TIFF would otherwise be written as one file per frame. An SVG is drawn on
+--- white: its background is transparent, and black lines on a dark terminal would be invisible.
 ---@param src string  input file path
 ---@param dst string  output PNG path
+---@param kind "jpeg"|"webp"|"bmp"|"tiff"|"svg"
 ---@return string[]
-local function build_convert_cmd(tool, src, dst)
+local function build_convert_cmd(src, dst, kind)
   local dim = tostring(MAX_CONVERT_DIM)
-  if tool == "sips" then
-    -- -Z resizes only if the image is larger than the specified dimension
-    return { "sips", "-s", "format", "png", "-Z", dim, src, "--out", dst }
-  elseif tool == "ffmpeg" then
-    -- scale filter with force_original_aspect_ratio keeps aspect ratio;
-    -- -vframes 1 ensures only one frame for static images
-    return {
-      "ffmpeg",
-      "-y",
-      "-i",
-      src,
-      "-vframes",
-      "1",
-      "-vf",
-      "scale='min(" .. dim .. ",iw)':'min(" .. dim .. ",ih)':force_original_aspect_ratio=decrease",
-      dst,
-    }
-  else
-    return { "magick", src, "-resize", dim .. "x" .. dim .. ">", dst }
-  end
+  local cmd = { "magick" }
+  vim.list_extend(cmd, CONVERT_LIMITS)
+  if kind == "svg" then vim.list_extend(cmd, { "-density", SVG_DENSITY, "-background", "white" }) end
+  cmd[#cmd + 1] = kind .. ":" .. src .. "[0]"
+  if kind == "svg" then vim.list_extend(cmd, { "-alpha", "remove", "-alpha", "off" }) end
+  vim.list_extend(cmd, { "-resize", dim .. "x" .. dim .. ">", dst })
+  return cmd
+end
+
+--- The command to convert `path`, or nil when this plugin does not convert it (not one of the formats, or an SVG
+--- that points outside itself).
+---@param path string
+---@param dst string
+---@return string[]? cmd
+local function convert_command(path, dst)
+  local kind = M.detect_format(path)
+  if not kind or kind == "png" then return nil end
+  if kind == "svg" and M.svg_refusal(path) then return nil end
+  return build_convert_cmd(path, dst, kind)
 end
 
 -- ============================================================================
@@ -1203,7 +1301,7 @@ local function install_to_cache(tmp, cache_path)
 end
 
 --- Ensure image is in a format the terminal can display natively (synchronous).
---- PNG is passed through. JPEG/WebP are converted to PNG and cached
+--- PNG is passed through. JPEG, WebP, BMP, TIFF and SVG are converted to PNG and cached
 --- on disk so subsequent calls for the same source skip re-conversion.
 ---@param path string
 ---@return string? png_path, boolean is_temp
@@ -1214,7 +1312,9 @@ function M.ensure_png(path)
   local cache_path = get_converted_cache_path(path)
   if cache_path and vim.fn.filereadable(cache_path) == 1 then return cache_path, false end
   local tmp = vim.fn.tempname() .. ".png"
-  local result = vim.system(build_convert_cmd(tool, path, tmp), { text = true }):wait()
+  local cmd = convert_command(path, tmp)
+  if not cmd then return nil, false end
+  local result = vim.system(cmd, { text = true }):wait()
   if result.code ~= 0 then return nil, false end
   if cache_path and install_to_cache(tmp, cache_path) then return cache_path, false end
   return tmp, true
@@ -1239,8 +1339,13 @@ function M.ensure_png_async(path, callback)
     return
   end
   local tmp = vim.fn.tempname() .. ".png"
+  local cmd = convert_command(path, tmp)
+  if not cmd then
+    callback(nil, false)
+    return
+  end
   async.run(function()
-    if async.system(build_convert_cmd(tool, path, tmp), { text = true }).code ~= 0 then
+    if async.system(cmd, { text = true }).code ~= 0 then
       callback(nil, false)
       return
     end

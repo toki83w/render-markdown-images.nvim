@@ -12,7 +12,8 @@ Taken from the `toki83w/md-render.nvim` fork of [`delphinus/md-render.nvim`](htt
 - `scripts/vendor-async.sh` and `lua/render-markdown-images/vendor/README.md` (retargeted),
 - a good part of the tests (`tests/image_test.lua`, `placeholder_test.lua`, `tty_test.lua`, `async_test.lua`,
   `plantuml_test.lua`, `plantuml_kitty_test.lua`, the ported parts of others) and the fixtures
-  `tests/fixtures/test_4x4.png` and `tests/fixtures/demo_160x120.png` (`assets/demo/test.png` there).
+  `tests/fixtures/test_4x4.png` and `tests/fixtures/demo_160x120.png` (`assets/demo/test.png` there), which is also
+  the source of the JPEG, WebP, BMP and TIFF copies `tests/fixtures/demo_160x120.*` that the demo shows.
 
 The licence of md-render.nvim:
 

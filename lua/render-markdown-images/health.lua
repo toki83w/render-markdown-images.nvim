@@ -21,6 +21,23 @@ function M._tmux(args)
   return nil
 end
 
+--- The formats `magick` can read, from `magick -list format` (names in capitals), or nil if it could not be
+--- asked. Replaceable so the checks can be tested without ImageMagick.
+---@return table<string, boolean>?
+function M._magick_formats()
+  local ok, res = pcall(function()
+    return vim.system({ "magick", "-list", "format" }, { text = true }):wait(5000)
+  end)
+  if not ok or not res or res.code ~= 0 then return nil end
+  local formats = {}
+  for line in (res.stdout or ""):gmatch "[^\n]+" do
+    -- `     WEBP* WEBP      rw+   WebP Image Format`: name, module, mode (read, write, multi-frame)
+    local name, mode = line:match "^%s+([%w_%-]+)%*?%s+%S+%s+([r%-][w%-][%+%-])"
+    if name and mode:sub(1, 1) == "r" then formats[name:upper()] = true end
+  end
+  return formats
+end
+
 --- `"tmux 3.3a"` / `"tmux next-3.4"` -> 3, 3 / 3, 4.
 ---@param out string?
 ---@return integer? major, integer? minor
@@ -202,11 +219,30 @@ local function check_tools(h, image)
     h.warn("curl not found: remote images are not downloaded", "Install curl, or register `set_download_fn()`")
   end
 
-  -- JPEG and WebP are converted to PNG before they can be shown; PNG is not.
-  local have_ffmpeg = tool("ffmpeg", "JPEG/WebP to PNG conversion")
-  local have_magick = tool("magick", "JPEG/WebP to PNG conversion")
-  if not (have_ffmpeg or have_magick or vim.fn.has "mac" == 1) then
-    h.warn("neither ffmpeg nor magick found: JPEG and WebP images are not shown", "Install FFmpeg or ImageMagick")
+  -- JPEG, WebP, BMP, TIFF and SVG are converted to PNG before they can be shown; PNG is not.
+  if tool("magick", "JPEG, WebP, BMP, TIFF and SVG to PNG conversion") then
+    local formats = M._magick_formats()
+    if formats then
+      local missing = {}
+      for _, name in ipairs { "JPEG", "WEBP", "BMP", "TIFF", "SVG" } do
+        -- ImageMagick's own SVG renderer is listed as MSVG; a build with librsvg lists SVG.
+        local reads = formats[name] or (name == "SVG" and formats.MSVG)
+        if not reads then missing[#missing + 1] = name end
+      end
+      if #missing == 0 then
+        h.ok "magick reads JPEG, WebP, BMP, TIFF and SVG"
+      else
+        h.warn(
+          "magick cannot read " .. table.concat(missing, ", ") .. ": images of those formats are not shown",
+          "Install an ImageMagick built with the libraries for them (libwebp, librsvg, ...); `magick -list format` shows what it reads"
+        )
+      end
+    end
+  else
+    h.warn(
+      "magick not found: JPEG, WebP, BMP, TIFF and SVG images are not shown",
+      "Install ImageMagick 7 (the `magick` command; ImageMagick 6, which has only `convert`, is not used)"
+    )
   end
 
   if not cfg.diagrams.mermaid then

@@ -23,6 +23,25 @@ Two on one line: ![one](../tests/fixtures/demo_160x120.png) ![two](../tests/fixt
 
 A file that does not exist draws nothing: ![missing](nothing-here.png)
 
+## Formats
+
+The format is told by the bytes of the file, not by its name. PNG goes to the terminal as it is; the rest is
+converted to PNG by `magick` (ImageMagick 7) and cached:
+
+- PNG ![png](../tests/fixtures/demo_160x120.png)
+- JPEG ![jpeg](../tests/fixtures/demo_160x120.jpg)
+- WebP ![webp](../tests/fixtures/demo_160x120.webp)
+- BMP ![bmp](../tests/fixtures/demo_160x120.bmp)
+- TIFF ![tiff](../tests/fixtures/demo_160x120.tiff)
+- SVG, drawn on white ![svg](../tests/fixtures/demo_160x120.svg)
+
+Not drawn, on purpose: an SVG that points outside itself (the reason is in the log), and a GIF (by its address,
+so it is never fetched):
+
+![An SVG with an outside link](../tests/fixtures/demo_external.svg)
+
+![A GIF, skipped](https://example.org/animation.gif)
+
 ## Remote images
 
 Downloaded with curl the first time (10 s and 20 MB at most), then served from the cache: close Neovim and

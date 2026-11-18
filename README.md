@@ -8,7 +8,7 @@ render-markdown.nvim decorates markdown in place but draws no pictures. This plu
 [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) with Unicode placeholders. The
 images are made of ordinary text cells, so scrolling, wrapping, splits and tmux panes are Neovim's business.
 
-- Local PNG, JPEG and WebP; remote images (downloaded with curl, cached); Obsidian vault names and embeds.
+- Local PNG, JPEG, WebP, BMP, TIFF and SVG; remote images (downloaded with curl, cached); Obsidian vault names and embeds.
 - Mermaid (`mmdr`, `mmdc` or `npx`) and PlantUML (`plantuml`, `java -jar $PLANTUML_JAR`, or a server you name).
 - Two modes, for images and diagrams separately: `below` (the picture under its source) and `replace` (the picture
   in the place of its source; the source comes back while the cursor is on it).
@@ -28,12 +28,12 @@ images are made of ordinary text cells, so scrolling, wrapping, splits and tmux 
   terminal. See [tmux](#tmux).
 - Optional tools, each for one kind of source:
 
-  | For           | Tool                                                             |
-  |---------------|------------------------------------------------------------------|
-  | remote images | `curl`                                                           |
-  | JPEG and WebP | `ffmpeg` or `magick` (`sips` on macOS)                           |
-  | Mermaid       | `mmdr`, `mmdc` (mermaid-cli), or `npx`                           |
-  | PlantUML      | `plantuml`, or `java` with `$PLANTUML_JAR`, or `plantuml_server` |
+  | For                           | Tool                                                             |
+  |-------------------------------|------------------------------------------------------------------|
+  | remote images                 | `curl`                                                           |
+  | JPEG, WebP, BMP, TIFF and SVG | `magick` (ImageMagick 7)                                         |
+  | Mermaid                       | `mmdr`, `mmdc` (mermaid-cli), or `npx`                           |
+  | PlantUML                      | `plantuml`, or `java` with `$PLANTUML_JAR`, or `plantuml_server` |
 
 `:checkhealth render-markdown-images` reports every one of these and says what to change.
 
@@ -112,7 +112,12 @@ concealed and the picture goes under the line before it; that one stays while yo
 | `![[pic.png]]`, `![[pic.png\|300]]`, `![alt](pic.png)` in a note inside an Obsidian vault | found by name in the vault: its attachments folder, its root, then anywhere in it |
 | ```` ```mermaid ````, ```` ```plantuml ````, ```` ```puml ````                            | rendered when the fence is closed and not empty; any case                         |
 
-PNG is sent as it is; JPEG and WebP are converted to PNG (at most 2000 px) and the result is cached. Badges
+PNG is sent as it is; JPEG, WebP, BMP, TIFF and SVG are converted to PNG by `magick` (at most 2000 px) and the
+result is cached. The format is told by the first bytes of the file, not by its name. An animated WebP and a
+multi-page TIFF show their first frame or page. An SVG is drawn on a white background (it has none of its own, and
+black lines would vanish on a dark terminal) at twice its own size, and an SVG that points at anything outside
+itself (`<image href="file:///...">`, `url(http://...)`, an entity, a stylesheet) is not drawn at all: only links to
+`#id` and embedded PNG, JPEG, GIF and WebP data are accepted. Badges
 (`img.shields.io`, ...), GIFs, videos and other schemes (`data:`, `mailto:`, ...) are left alone.
 
 Size: the width of the window's text area (less the number column, sign column and so on) less the indent of the
@@ -153,6 +158,12 @@ Start with `:checkhealth render-markdown-images`.
 - **Garbled characters where an image should be**: `'ambiwidth'` is not `single`, or the terminal has no Unicode
   placeholder support.
 - **Images twice**: snacks.nvim draws them in documents too; set `image = { doc = { enabled = false } }` there.
+- **JPEG, WebP, BMP, TIFF and SVG images stay as their source**: `magick` is not found, or cannot read that format.
+  It is the command of ImageMagick 7; the `imagemagick` package of Debian and Ubuntu is version 6, which has only
+  `convert` and is not used. Install ImageMagick 7 (Homebrew has it on macOS), and check that it was built with the
+  library for the format (`magick -list format`: libwebp for WebP, librsvg or its own renderer for SVG);
+  `:checkhealth` lists what it cannot read. An SVG that points at files or addresses outside itself is refused on
+  purpose: the log says so.
 - **A paragraph is missing its render-markdown.nvim decoration now and then**: seen with render-markdown.nvim alone on
   Neovim 0.12.3: after partial treesitter parses, Neovim can hand a plugin the wrong tree for a paragraph. This plugin
   does not use those trees, so its images are not affected.

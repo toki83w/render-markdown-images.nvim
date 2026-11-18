@@ -239,10 +239,20 @@ local function pipeline(entry, settle)
   M.produce(key, entry.spec, function(path, err, fatal, log_id)
     if not path then return settle(false, err or "no image produced", fatal, log_id) end
     local w, h = image.image_dimensions(path)
-    if not w then return settle(false, "not a readable PNG, JPEG or WebP: " .. path, true) end
+    -- A BMP, a TIFF or an SVG has no header read here: its size is that of the PNG it is converted to.
+    local format = image.detect_format(path)
+    if not w and (not format or format == "png") then
+      return settle(false, "not a readable PNG, JPEG, WebP, BMP, TIFF or SVG image: " .. path, true)
+    end
+    if format == "svg" then
+      local why = image.svg_refusal(path)
+      if why then return settle(false, "SVG not shown, it " .. why .. ": " .. path, true) end
+    end
     M.transmit(path, function(id, tx_w, tx_h)
       if not id then return settle(false, "transmitting failed: " .. path) end
-      settle(true, { id = id, w = tx_w or w, h = tx_h or h, path = path })
+      local width, height = tx_w or w, tx_h or h
+      if not width then return settle(false, "no size after converting: " .. path) end
+      settle(true, { id = id, w = width, h = height, path = path })
     end)
   end)
 end

@@ -531,22 +531,15 @@ end
 -- ============================================================================
 
 local function has_convert_tool()
-  return vim.fn.executable "sips" == 1 or vim.fn.executable "ffmpeg" == 1 or vim.fn.executable "magick" == 1
+  return vim.fn.executable "magick" == 1
 end
 
 --- Convert the PNG fixture to a temporary JPEG so we have a non-native source.
---- Returns nil if no conversion tool is available.
+--- Returns nil if magick is not available.
 local function make_test_jpeg()
   local out = vim.fn.tempname() .. ".jpg"
-  if vim.fn.executable "sips" == 1 then
-    vim.system({ "sips", "-s", "format", "jpeg", test_png, "--out", out }, { text = true }):wait()
-  elseif vim.fn.executable "ffmpeg" == 1 then
-    vim.system({ "ffmpeg", "-y", "-i", test_png, out }, { text = true }):wait()
-  elseif vim.fn.executable "magick" == 1 then
-    vim.system({ "magick", test_png, out }, { text = true }):wait()
-  else
-    return nil
-  end
+  if vim.fn.executable "magick" ~= 1 then return nil end
+  vim.system({ "magick", test_png, out }, { text = true }):wait()
   if vim.fn.filereadable(out) ~= 1 then return nil end
   return out
 end

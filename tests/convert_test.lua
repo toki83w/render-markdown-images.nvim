@@ -62,7 +62,7 @@ end
 
 h.test("a PNG needs no conversion, whatever tools exist", function()
   reset()
-  with_executables { ffmpeg = true, magick = true }
+  with_executables { magick = true }
   local rec = stub_converter()
   local done, png, is_temp = convert(fixture)
   h.assert_eq({ done, png, is_temp }, { true, fixture, false }, "passed through untouched")
@@ -73,47 +73,37 @@ h.test("a PNG needs no conversion, whatever tools exist", function()
   reset()
 end)
 
-h.test("ffmpeg is preferred over magick, with a bounded-size scale filter", function()
+h.test("magick converts, to a PNG no larger than 2000 px, from the first frame only", function()
   reset()
-  with_executables { ffmpeg = true, magick = true }
+  with_executables { magick = true }
   local rec = stub_converter()
   local src = make_source()
   local done, png = convert(src)
   h.assert_eq(done, true, "answered")
   local cmd = rec.calls[1]
-  h.assert_eq(cmd[1], "ffmpeg", "ffmpeg")
-  h.assert_eq({ unpack(cmd, 2, 4) }, { "-y", "-i", src }, "reads the source")
-  h.assert_eq(cmd[#cmd]:match "%.png$" ~= nil, true, "writes a PNG")
-  h.assert_eq(vim.tbl_contains(cmd, "-vframes"), true, "a single frame")
+  h.assert_eq(cmd[1], "magick", "magick")
+  h.assert_eq(vim.tbl_contains(cmd, "-limit"), true, "with resource limits")
+  local at = vim.fn.index(cmd, "jpeg:" .. src .. "[0]") + 1
+  h.assert_eq(at > 0, true, "the source is read as the JPEG it is, first frame only")
   h.assert_eq(
-    vim.tbl_contains(cmd, "scale='min(2000,iw)':'min(2000,ih)':force_original_aspect_ratio=decrease"),
-    true,
-    "scaled down to 2000 px, never up"
+    { unpack(cmd, at + 1, at + 2) },
+    { "-resize", "2000x2000>" },
+    "scaled down to 2000 px and never up, right after the source"
   )
+  h.assert_eq(cmd[#cmd]:match "%.png$" ~= nil, true, "writes a PNG")
   h.assert_eq(png:find(CONVERTED_DIR .. "/", 1, true) ~= nil, true, "result lives in the render-markdown-images cache")
   reset()
 end)
 
-h.test("magick is used when ffmpeg is missing", function()
+h.test("ImageMagick 6's `convert` is not used: only magick", function()
   reset()
-  with_executables { magick = true }
+  with_executables { convert = true }
   local rec = stub_converter()
-  local src = make_source()
-  convert(src)
-  h.assert_eq({ unpack(rec.calls[1], 1, 4) }, { "magick", src, "-resize", "2000x2000>" }, "command")
+  local done, png, is_temp = convert(make_source())
+  h.assert_eq({ done, png, is_temp }, { true, nil, false }, "nil answer")
+  h.assert_eq(#rec.calls, 0, "no process")
   reset()
 end)
-
-if vim.fn.has "mac" == 0 then
-  h.test("sips is only for macOS", function()
-    reset()
-    with_executables { sips = true, magick = true }
-    local rec = stub_converter()
-    convert(make_source())
-    h.assert_eq(rec.calls[1][1], "magick", "sips is ignored elsewhere")
-    reset()
-  end)
-end
 
 h.test("no tool: nothing converted, nothing spawned", function()
   reset()
@@ -127,7 +117,7 @@ end)
 
 h.test("a failing converter answers nil", function()
   reset()
-  with_executables { ffmpeg = true }
+  with_executables { magick = true }
   stub_converter(1)
   local done, png, is_temp = convert(make_source())
   h.assert_eq({ done, png, is_temp }, { true, nil, false }, "nil answer")
@@ -136,7 +126,7 @@ end)
 
 h.test("converted PNGs are cached by source path and mtime", function()
   reset()
-  with_executables { ffmpeg = true }
+  with_executables { magick = true }
   local rec = stub_converter()
   local src = make_source()
   local _, first, first_temp = convert(src)

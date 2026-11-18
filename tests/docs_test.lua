@@ -88,7 +88,7 @@ end)
 h.test("every option the README table lists is one setup() takes, and the other way round", function()
   -- Each row of the options table starts with the option in backticks.
   local listed = {}
-  for name in readme:gmatch "\n| `([%w_.]+)` |" do
+  for name in readme:gmatch "\n| `([%w_.]+)`%s*|" do
     listed[#listed + 1] = name
   end
   table.sort(listed)
