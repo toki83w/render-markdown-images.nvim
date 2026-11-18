@@ -1,0 +1,330 @@
+*render-markdown-images.txt*	Images and diagrams in markdown buffers
+
+Author: render-markdown-images.nvim contributors	License: MIT
+
+==============================================================================
+CONTENTS                                     *render-markdown-images-contents*
+
+Introduction                             |render-markdown-images-introduction|
+Requirements                             |render-markdown-images-requirements|
+Installation                             |render-markdown-images-installation|
+Options                                       |render-markdown-images-options|
+Modes                                           |render-markdown-images-modes|
+What is drawn                                 |render-markdown-images-sources|
+tmux                                             |render-markdown-images-tmux|
+Health check                                   |render-markdown-images-health|
+Troubleshooting                       |render-markdown-images-troubleshooting|
+Limitations                               |render-markdown-images-limitations|
+Privacy and security                          |render-markdown-images-privacy|
+Lua API                                           |render-markdown-images-api|
+Highlight groups                           |render-markdown-images-highlights|
+Credits and licences                          |render-markdown-images-credits|
+
+==============================================================================
+INTRODUCTION                             *render-markdown-images-introduction*
+
+render-markdown-images.nvim draws images and diagrams in the markdown source
+buffer, through the custom handlers of render-markdown.nvim.  render-markdown
+decorates markdown in place and draws no pictures; this plugin adds
+`![alt](pic.png)`, `![[pic.png|300]]`, and Mermaid and PlantUML fences, shown
+as real images in terminals that implement the Kitty graphics protocol with
+Unicode placeholders.  The images are made of ordinary text cells, so
+scrolling, wrapping, splits and tmux panes are Neovim's business.
+
+Nothing is waited for: downloads and renderings happen in the background, and
+the buffer is drawn again when one is ready.  Only what is in view is asked
+for.
+
+==============================================================================
+REQUIREMENTS                             *render-markdown-images-requirements*
+
+- Neovim 0.12 or newer (|nvim_ui_send()|).  The "replace" mode
+  (|render-markdown-images-modes|) needs 0.11's `conceal_lines`, which 0.12
+  has.
+- render-markdown.nvim.  `replace` mode needs one that draws a mark's
+  `replace` (v8.14.0 or newer); with an older one, images go below their
+  source.
+- A terminal that implements the Kitty graphics protocol WITH Unicode
+  placeholders (kitty, foot 1.28 or newer, Ghostty, ...).  Placeholder support
+  cannot be asked, so nothing here checks it: having this plugin configured
+  says that your terminal shows images.
+- 'termguicolors' on and 'ambiwidth' `single`.  The image id travels in a
+  24-bit colour, and the placeholder character is ambiguous-width.
+- In tmux (3.3 or newer): `set -g allow-passthrough on`, and `RGB` and
+  `usstyle` in `terminal-features` for your terminal.
+  See |render-markdown-images-tmux|.
+- Optional tools, each for one kind of source:
+    remote images	`curl`
+    JPEG and WebP	`ffmpeg` or `magick` (`sips` on macOS)
+    Mermaid		`mmdr`, `mmdc` (mermaid-cli), or `npx`
+    PlantUML		`plantuml`, or `java` with $PLANTUML_JAR, or
+			the option `plantuml_server`
+
+|render-markdown-images-health| reports every one of these.
+
+==============================================================================
+INSTALLATION                             *render-markdown-images-installation*
+
+The plugin has no commands and nothing to enable: it is a set of handlers,
+registered with render-markdown.nvim.  With lazy.nvim: >lua
+
+    {
+      "MeanderingProgrammer/render-markdown.nvim",
+      dependencies = { "you/render-markdown-images.nvim" },
+      opts = function()
+        return {
+          custom_handlers = require("render-markdown-images").handlers(),
+        }
+      end,
+    }
+<
+|render-markdown-images.setup()| is only needed to change options;
+|render-markdown-images.handlers()| works without it.  To turn the plugin off,
+leave `custom_handlers` out.
+
+If you already have custom handlers, merge: the table has one entry,
+`markdown`, with `extends = true`, so render-markdown's own markdown rendering
+goes on as before.
+
+==============================================================================
+OPTIONS                                       *render-markdown-images-options*
+
+>lua
+    require("render-markdown-images").setup({
+      images = { mode = "below" },   -- "below" | "replace"
+      diagrams = {
+        mode = "below",              -- "below" | "replace"
+        mermaid = true,              -- false: leave mermaid fences as code
+        plantuml = true,             -- false: leave plantuml fences as code
+      },
+      plantuml_server = nil,   -- e.g. "https://plantuml.example/plantuml"
+    })
+<
+Unknown options are an error, so a typo does not go unnoticed.  setup() starts
+from the defaults every time.
+
+                                          *render-markdown-images-images.mode*
+images.mode ~
+        "below" (default) or "replace": what to do with the source of an
+        image.  See |render-markdown-images-modes|.
+
+                                        *render-markdown-images-diagrams.mode*
+diagrams.mode ~
+        "below" (default) or "replace": the same for Mermaid and PlantUML
+        fences.
+
+                                     *render-markdown-images-diagrams.mermaid*
+diagrams.mermaid ~
+        true (default).  false: no Mermaid work at all, the fences stay code.
+
+                                    *render-markdown-images-diagrams.plantuml*
+diagrams.plantuml ~
+        true (default).  false: no PlantUML work at all, the fences stay code.
+
+                                      *render-markdown-images-plantuml_server*
+plantuml_server ~
+        nil (default).  The base URL of a PlantUML server, used when no local
+        renderer produced the picture.  The source of the diagram is sent to
+        it: see |render-markdown-images-privacy|.
+
+==============================================================================
+MODES                                           *render-markdown-images-modes*
+
+"below": the picture is drawn in the lines under its source, which stays
+visible.  A picture on a line of its own goes under that line; one in the
+middle of text goes under the line it is on; images that share a line stack
+left to right.  A diagram goes under its closing fence (or under the last
+line of its source when render-markdown conceals the fence line, which is its
+default, as Neovim would not draw anything under a concealed line).
+
+"replace": the source is hidden and the picture takes its place.  An image
+alone on its line at the left margin, and a diagram fence, are hidden whole;
+an image among text, or in a list item or a quote, loses only its
+`![...](...)`, so the bullet or the quote marker stays.  When the cursor is on
+the source (render-markdown's `anti_conceal`, with its `above` and `below`),
+the source comes back and the picture goes.  A source whose picture is not
+ready, or failed, is never hidden.
+
+In both modes an image in a table cell goes below the table: a hole in the
+table would break it.
+
+Where the source is the last thing in the buffer there is nothing to draw
+above, so in "replace" mode the source is concealed and the picture goes under
+the line before it; that one stays while you edit the source, above it.
+
+==============================================================================
+WHAT IS DRAWN                                 *render-markdown-images-sources*
+
+`![alt](path/to/pic.png)`, `![alt](<a path with spaces.png>)`, `%20` escapes
+	Relative to the note; `~/...` and absolute paths too.
+
+`![alt](https://example.org/pic.png)`
+	Downloaded with curl, at most 10 s and 20 MB, http(s) only, redirects
+	included.  Cached.
+
+`![[pic.png]]`, `![[pic.png|300]]`, and `![alt](pic.png)` in a note inside an
+Obsidian vault
+	Found by name in the vault: its attachments folder, its root, then
+	anywhere in it.  A file next to the note wins.
+
+mermaid, plantuml and puml fences
+	Rendered when the fence is closed and not empty; any case.  Mermaid
+	with `mmdr`, `mmdc` or `npx`, in the editor's colours, made again when
+	|:colorscheme| or 'background' change them.  PlantUML with `plantuml`,
+	or `java -jar $PLANTUML_JAR`, or the `plantuml_server`.
+
+PNG is sent as it is; JPEG and WebP are converted to PNG (at most 2000 px) and
+the result is cached.  Badges (`img.shields.io`, ...), GIFs, videos and other
+schemes (`data:`, `mailto:`, ...) are left alone.
+
+Size: the width of the window's text area (less the number column, sign
+column and so on) less the indent of the list or quote the image is in, at
+most the height of the window, at most 297 cells, and never larger than the
+image's pixels at your terminal's cell size.
+
+Failures are quiet.  An image that cannot be found, downloaded or rendered
+just stays as its source, and a line goes to the log
+(`stdpath("state") .. "/render-markdown-images.log"`), once per cause.  A
+failed entry is tried again when it is asked for more than 30 s later; a
+download is attempted four times before that.
+
+Caches are in `stdpath("cache") .. "/render-markdown-images/"`: `images`
+(downloads), `converted`, `mermaid`, `plantuml`.
+
+==============================================================================
+TMUX                                             *render-markdown-images-tmux*
+
+Graphics sequences have to pass through tmux to the terminal: >tmux
+
+    set -g allow-passthrough on
+    # the terminal's name as tmux knows it:
+    #   tmux display -p '#{client_termname}'
+    set -as terminal-features ',foot*:RGB'
+    set -as terminal-features ',foot*:usstyle'
+<
+`RGB` carries the image id (a colour), `usstyle` the placement id (an
+underline colour).  Through tmux the terminal may not answer the graphics
+query (and nothing asks it at run time), yet images are drawn:
+|render-markdown-images-health| says so and does not call it a failure.
+
+==============================================================================
+HEALTH CHECK                                   *render-markdown-images-health*
+
+>vim
+    :checkhealth render-markdown-images
+<
+Reports Neovim, the terminal (its answer to the graphics query: the only place
+it is asked), 'termguicolors' and 'ambiwidth', tmux, the tools, whether
+render-markdown is installed and this plugin's handler registered, a warning
+when snacks.nvim would draw every image twice, the configuration, and what was
+logged this session.
+
+==============================================================================
+TROUBLESHOOTING                       *render-markdown-images-troubleshooting*
+
+Start with |render-markdown-images-health|.
+
+Nothing is drawn, the source stays ~
+The image was not found (the path is relative to the note), is a format that
+is skipped, or failed: see the log.  Is it in view?  Only the paragraphs
+render-markdown has in view are asked for.  Is `custom_handlers` registered?
+
+The source is hidden and blank rows are left ("replace") ~
+The terminal does not draw the placeholders.  In tmux: `allow-passthrough`,
+`RGB`, `usstyle`.  Is 'termguicolors' on?
+
+Garbled characters where an image should be ~
+'ambiwidth' is not `single`, or the terminal has no Unicode placeholder
+support.
+
+Images twice ~
+snacks.nvim draws them in documents too; set
+`image = { doc = { enabled = false } }` there.
+
+A paragraph is missing its render-markdown decoration now and then ~
+Seen with render-markdown alone on Neovim 0.12.3: after partial treesitter
+parses, Neovim can hand a plugin the wrong tree for a paragraph.  This plugin
+does not use those trees, so its images are not affected.
+
+==============================================================================
+LIMITATIONS                               *render-markdown-images-limitations*
+
+- Marks belong to the buffer: with one buffer in two windows of different
+  widths, the picture is drawn at the size of the window rendered last.
+- A picture is as tall as its rows: it is capped at the height of the window,
+  and the virtual lines of "below" mode go as soon as the line they hang from
+  scrolls past the top of the window.
+- An image file that changes on disk is not drawn again until the session ends
+  (the path is its key).
+- Reference-style images (`![alt][ref]`) and animations are not drawn.
+- Remote images are fetched when a document with them is in view; see
+  |render-markdown-images-privacy|.
+- Windows is not a target.
+
+==============================================================================
+PRIVACY AND SECURITY                          *render-markdown-images-privacy*
+
+- Remote images are downloaded when you open or scroll to a document that
+  links them.  The server learns that you opened it, as it would from a
+  browser.  Badges, GIFs and videos are skipped; others are fetched whatever
+  the link claims to be, and discarded if they are not an image.
+  |render-markdown-images.set_download_fn()| can take over, e.g. to refuse
+  hosts.
+- PlantUML: the source of a diagram only leaves your machine when you set
+  `plantuml_server`, and then only when no local renderer produced the
+  picture.  Mermaid is always rendered locally.
+- Files are handed to the terminal as temporary copies named
+  `tty-graphics-protocol`, in your temp directory, which the terminal deletes
+  after reading.  On exit only this instance's own images are deleted: every
+  Neovim takes its image ids from a range of its own, so those of another
+  Neovim in the same terminal are not touched.
+
+==============================================================================
+LUA API                                           *render-markdown-images-api*
+
+                                              *render-markdown-images.setup()*
+require("render-markdown-images").setup({opts})
+        Validate {opts} and apply them over the defaults.  Raises an error on
+        a bad or unknown option and keeps the previous configuration.  See
+        |render-markdown-images-options|.
+
+                                           *render-markdown-images.handlers()*
+require("render-markdown-images").handlers()
+        The table for render-markdown's `custom_handlers`: one entry,
+        `markdown`, with `extends = true`.
+
+                                    *render-markdown-images.set_download_fn()*
+require("render-markdown-images").set_download_fn({fn})
+        Take over downloads of remote images.  {fn}(url, output_path,
+        callback) is called before curl for each URL.  To take the job it
+        returns `true` and, when done, calls `callback(true)` after writing
+        the image to {output_path} (or `callback(false)`); returning `false`
+        leaves the URL to curl.  Pass `nil` to remove it.
+
+==============================================================================
+HIGHLIGHT GROUPS                           *render-markdown-images-highlights*
+
+`RenderMdImg_{n}` are made by the plugin, one per placement, and redefined
+when the colorscheme changes.  Their foreground and underline colours carry
+the ids that tell the terminal which image to show: they are not for themes,
+and changing them breaks the images.
+
+==============================================================================
+CREDITS AND LICENCES                          *render-markdown-images-credits*
+
+MIT.  This plugin stands on others' work; the notices are in
+THIRD_PARTY_NOTICES.md:
+
+- md-render.nvim (MIT): the image core, `image.lua`, `placeholder.lua`,
+  `async.lua`, `tty.lua`, `obsidian.lua`, the vendoring script, a good part of
+  the tests and one demo image, taken from the `toki83w/md-render.nvim` fork
+  of `delphinus/md-render.nvim`.
+- Neovim's `vim.async` (Apache-2.0), vendored in
+  `lua/render-markdown-images/vendor/`, from the Neovim repository, which took
+  it from lewis6991/async.nvim (MIT).
+- snacks.nvim (Apache-2.0): the form of the image query for wikilink embeds,
+  and the idea of moving virtual lines off a concealed line.
+- render-markdown.nvim (MIT): the handler API, and its `replace` mechanism,
+  which is how "replace" mode works.
+
+ vim:tw=78:ts=8:noet:ft=help:norl:
