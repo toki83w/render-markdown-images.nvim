@@ -206,7 +206,7 @@ makes a missing one a failure instead of a skip). `scripts/` has demos:
 
 ```sh
 nvim -u scripts/demo_below.lua scripts/demo_below.md                       # images and diagrams under their source
-RMI_MODE=replace nvim -u scripts/demo_below.lua scripts/demo_below.md      # in place of it; :Diagnose says what is going on
+RMI_MODE=replace nvim -u scripts/demo_below.lua scripts/demo_below.md      # in place of it; :RmiDiagnose says what is going on
 nvim -u scripts/demo_below.lua tests/fixtures/vault/notes/note.md          # an Obsidian vault
 ```
 

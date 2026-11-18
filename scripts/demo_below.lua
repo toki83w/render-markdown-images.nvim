@@ -9,7 +9,7 @@
 --
 -- Run it in a terminal that speaks the Kitty graphics protocol (foot, kitty, WezTerm, Ghostty, ...),
 -- directly or in tmux (>= 3.3, `set -g allow-passthrough on`). The terminal is not asked whether it can:
--- having the plugin configured says so. `:Diagnose` reports what it would answer. render-markdown.nvim is taken from
+-- having the plugin configured says so. `:RmiDiagnose` reports what it would answer. render-markdown.nvim is taken from
 -- $RENDER_MARKDOWN_PATH, ~/software/neovim_plugins/render-markdown.nvim, or lazy.nvim's data directory.
 -- Edit the document, resize the window, `:set number`, `:colorscheme ...`, `:set background=light`: the images follow.
 
@@ -51,7 +51,7 @@ vim.api.nvim_create_autocmd("FileType", {
 })
 
 -- ============================================================================
--- :Diagnose — what this plugin knows, for when no image shows
+-- :RmiDiagnose — what this plugin knows, for when no image shows
 -- ============================================================================
 
 -- Keep a short record of the Kitty graphics commands that leave Neovim. Only this demo does it.
@@ -64,7 +64,7 @@ vim.api.nvim_ui_send = function(data)
   return ui_send(data)
 end
 
-vim.api.nvim_create_user_command("Diagnose", function()
+vim.api.nvim_create_user_command("RmiDiagnose", function()
   local image = require "render-markdown-images.image"
   local store = require "render-markdown-images.store"
   local log = require "render-markdown-images.log"
