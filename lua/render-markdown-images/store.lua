@@ -19,8 +19,10 @@
 ---@alias render-markdown-images.Status "working"|"ready"|"failed"
 
 ---@class render-markdown-images.Spec
----@field kind "file"|"url"|"mermaid"|"plantuml"
+---@field kind "file"|"url"|"vault"|"mermaid"|"plantuml"
 ---@field source? string the diagram text, for `mermaid` and `plantuml`
+---@field name? string what an Obsidian vault is asked for, for `vault`: a file name or a path in the vault
+---@field dir? string the directory of the note that asks, for `vault`: it says which vault
 
 ---@class render-markdown-images.Entry
 ---@field key string
@@ -33,6 +35,8 @@
 ---@field h? integer pixel height of the transmitted image, once ready
 ---@field path? string the PNG or other file that was transmitted, once ready
 ---@field err? string why the last attempt failed
+---@field failed_at? number when it failed for good, in ms (`vim.uv.hrtime()` / 1e6)
+---@field invalid? boolean it was asked for without what it needs, and is not tried again for that reason
 
 ---@class render-markdown-images.Store
 local M = {}
@@ -48,6 +52,11 @@ M.limits = {
   debounce = 50, -- ms a buffer's re-render is held back, so completions arriving together share it
   retry_delay = 500, -- ms before a failed attempt is tried again
   timeout = 60000, -- ms before an attempt that never answered is given up on
+  -- ms after which a failed entry is tried again when it is asked for. A download fails because the network
+  -- was down, a vault image because it was not there yet, a file because it was being written: none of that
+  -- is for good. Asking is what retries, so nothing runs in the background and a document nobody looks at costs
+  -- nothing.
+  retry_failed_after = 30000,
 }
 
 ---@type table<string, render-markdown-images.Entry>
@@ -85,6 +94,11 @@ function M.produce(key, spec, done)
       if path then return done(path) end
       done(nil, "download failed: " .. key)
     end)
+  elseif kind == "vault" then
+    -- Looked for here, not while a document is rendered: a vault can be big and the search is a walk of it.
+    local path = require("render-markdown-images.obsidian").resolve(spec.name, spec.dir)
+    if path then return done(path) end
+    return done(nil, ("not in the Obsidian vault: %s"):format(spec.name), true)
   elseif kind == "mermaid" then
     if not image.has_mmdc() then
       return done(nil, "no mermaid renderer (mmdr, mmdc or npx) found", true, "no mermaid renderer")
@@ -194,6 +208,7 @@ local function attempt_done(entry, ok, result, fatal, log_id)
     end
   elseif fatal or entry.attempts > M.limits.retries then
     entry.status, entry.err = "failed", tostring(result)
+    entry.failed_at = (vim.uv or vim.loop).hrtime() / 1e6
     entry.bufs = {} -- a failed entry draws nothing, so there is nothing to render again
     -- Quietly: no message, just a line in the log, and one per cause.
     if log_id ~= false then
@@ -299,8 +314,29 @@ end
 ---@return render-markdown-images.Spec?
 local function infer(key)
   if image.is_url(key) then return { kind = "url" } end
-  if key:match "^mermaid:" or key:match "^plantuml:" then return nil end -- the text is needed, and is not in the key
+  if key:match "^mermaid:" or key:match "^plantuml:" or key:match "^vault:" then return nil end -- more is needed than the key says
   return { kind = "file" }
+end
+
+---@return number ms
+local function now()
+  return (vim.uv or vim.loop).hrtime() / 1e6
+end
+
+--- What is wrong with a spec, if anything: a diagram without its source, a vault name without a vault.
+---@param spec? render-markdown-images.Spec nil when the key needed one and none was given
+---@param key string
+---@return string?
+local function spec_problem(spec, key)
+  if not spec then
+    return key:match "^vault:" and "vault name or directory is missing" or "diagram source is missing"
+  end
+  local kind = spec.kind
+  if (kind == "mermaid" or kind == "plantuml") and (spec.source or "") == "" then return "diagram source is missing" end
+  if kind == "vault" and ((spec.name or "") == "" or (spec.dir or "") == "") then
+    return "vault name or directory is missing"
+  end
+  return nil
 end
 
 --- Ask for an image. Never waits.
@@ -316,17 +352,26 @@ function M.get(key, buf, spec)
   local entry = entries[key]
   if not entry then
     spec = spec or infer(key)
-    local valid = spec ~= nil and ((spec.kind ~= "mermaid" and spec.kind ~= "plantuml") or (spec.source or "") ~= "")
+    local problem = spec_problem(spec, key)
     entry = {
       key = key,
       spec = spec or { kind = "file" },
-      status = valid and "working" or "failed",
+      status = problem and "failed" or "working",
       attempts = 0,
       bufs = {},
-      err = not valid and "diagram source is missing" or nil,
+      err = problem,
+      invalid = problem ~= nil,
+      failed_at = problem and now() or nil,
     }
     entries[key] = entry
-    if valid then
+    if not problem then
+      queue[#queue + 1] = key
+      schedule_pump()
+    end
+  elseif entry.status == "failed" and entry.failed_at and now() - entry.failed_at >= M.limits.retry_failed_after then
+    -- Asked for again long after it failed: try again. A spec that was never valid stays failed.
+    if not entry.invalid then
+      entry.status, entry.attempts, entry.failed_at = "working", 0, nil
       queue[#queue + 1] = key
       schedule_pump()
     end

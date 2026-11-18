@@ -23,6 +23,22 @@ Two on one line: ![one](../tests/fixtures/demo_160x120.png) ![two](../tests/fixt
 
 A file that does not exist draws nothing: ![missing](nothing-here.png)
 
+## Remote images
+
+Downloaded with curl the first time (10 s and 20 MB at most), then served from the cache: close Neovim and
+open this again, and it is there at once. Badges, GIFs and videos are not fetched.
+
+![A cat](https://http.cat/200.jpg)
+
+Among text ![cat](https://http.cat/404.jpg) it goes below, as a local one does.
+
+![A badge, skipped](https://img.shields.io/badge/build-passing-green.svg)
+
+## Obsidian
+
+A note inside a vault finds `![[name.png]]` embeds by name, wherever they are in the vault. See
+`tests/fixtures/vault/notes/note.md` (`nvim -u scripts/demo_below.lua tests/fixtures/vault/notes/note.md`).
+
 ## Diagrams
 
 A Mermaid fence is drawn under its source (needs `mmdr`, `mmdc` or `npx`):

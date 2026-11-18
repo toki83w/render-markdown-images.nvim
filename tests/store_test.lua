@@ -1048,4 +1048,119 @@ h.test("snapshot lists every entry with its state", function()
   finish_test()
 end)
 
+-- ============================================================================
+-- Failing for good is not for ever
+-- ============================================================================
+
+h.test("a failed entry is tried again when it is asked for after retry_failed_after", function()
+  reset()
+  h.stub(store.limits, "retry_failed_after", 150)
+  local fail = true
+  local produce = stub_produce(function(call)
+    if fail then return call.done(nil, "network down") end
+    call.done(fixture)
+  end)
+  stub_transmit()
+  stub_render()
+  store.get(fixture, new_buf())
+  h.assert_eq(wait_status(fixture, "failed"), true, "failed")
+  h.assert_eq(#produce.calls, 4, "after four attempts")
+
+  store.get(fixture)
+  sleep(40)
+  h.assert_eq(#produce.calls, 4, "asked again at once: not tried again")
+  h.assert_eq(store.peek(fixture), "failed", "still failed")
+
+  fail = false
+  sleep(150)
+  local status = store.get(fixture)
+  h.assert_eq(status, "working", "asked again later: working")
+  h.assert_eq(wait_status(fixture, "ready"), true, "and ready now that it works")
+  h.assert_eq(select(2, store.get(fixture)).attempts, 1, "with the attempts counted afresh")
+  finish_test()
+end)
+
+h.test("a retried entry that fails again waits again", function()
+  reset()
+  h.stub(store.limits, "retry_failed_after", 100)
+  local produce = stub_produce(function(call)
+    call.done(nil, "still down", true)
+  end)
+  store.get "/a.png"
+  wait_status("/a.png", "failed")
+  sleep(120)
+  store.get "/a.png"
+  wait_status("/a.png", "failed")
+  h.assert_eq(#produce.calls, 2, "one more attempt")
+  store.get "/a.png"
+  sleep(30)
+  h.assert_eq(#produce.calls, 2, "and no more until the time has passed again")
+  finish_test()
+end)
+
+h.test("a retry that fails again is not written to the log again", function()
+  reset()
+  log.reset()
+  h.stub(store.limits, "retry_failed_after", 50)
+  stub_produce(function(call)
+    call.done(nil, "still down", true)
+  end)
+  store.get "/a.png"
+  wait_status("/a.png", "failed")
+  sleep(70)
+  store.get "/a.png"
+  wait_status("/a.png", "failed")
+  h.assert_eq(#log.recent(), 1, "one line")
+  finish_test()
+end)
+
+h.test("an entry whose spec is wrong stays failed whatever time passes", function()
+  reset()
+  h.stub(store.limits, "retry_failed_after", 0)
+  local produce = stub_produce()
+  local key = store.diagram_key("mermaid", "x")
+  store.get(key)
+  sleep(20)
+  store.get(key)
+  sleep(20)
+  h.assert_eq({ store.peek(key), #produce.calls }, { "failed", 0 }, "nothing to retry")
+  finish_test()
+end)
+
+h.test("a vault name is looked up in the vault by the store, not by the caller", function()
+  reset()
+  local looked_up = {}
+  local obsidian = require "render-markdown-images.obsidian"
+  h.stub(obsidian, "resolve", function(name, dir)
+    looked_up[#looked_up + 1] = { name, dir }
+    if name == "found.png" then return fixture end
+  end)
+  stub_transmit()
+  stub_render()
+  store.get("vault:/v:found.png", nil, { kind = "vault", name = "found.png", dir = "/v/notes" })
+  store.get("vault:/v:lost.png", nil, { kind = "vault", name = "lost.png", dir = "/v/notes" })
+  wait_status("vault:/v:found.png", "ready")
+  wait_status("vault:/v:lost.png", "failed")
+  h.assert_eq(
+    looked_up,
+    { { "found.png", "/v/notes" }, { "lost.png", "/v/notes" } },
+    "each once, with the note's directory"
+  )
+  h.assert_eq(select(2, store.get "vault:/v:found.png").path, fixture, "the file it found is what was transmitted")
+  h.assert_eq(
+    select(2, store.get "vault:/v:lost.png").err,
+    "not in the Obsidian vault: lost.png",
+    "and what it did not find says so"
+  )
+  h.assert_eq(select(2, store.get "vault:/v:lost.png").attempts, 1, "not found is not retried at once")
+  finish_test()
+end)
+
+h.test("a vault key without its spec fails at once", function()
+  reset()
+  local status, entry = store.get "vault:/v:x.png"
+  h.assert_eq({ status, entry.err }, { "failed", "vault name or directory is missing" }, "failed")
+  finish_test()
+end)
+
 h.finish "store_test"

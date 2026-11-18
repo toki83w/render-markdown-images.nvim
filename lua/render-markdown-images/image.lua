@@ -1035,7 +1035,22 @@ function M.download_async(url, callback)
     end
 
     -- Default: download with curl
-    local cmd = { "curl", "-sfL", "--max-time", "10", "--max-filesize", "20000000", "-o", cache_path, url }
+    -- The URL comes out of a document, so what it may lead to is limited: http(s) only, redirects included.
+    local cmd = {
+      "curl",
+      "-sfL",
+      "--proto",
+      "=http,https",
+      "--proto-redir",
+      "=http,https",
+      "--max-time",
+      "10",
+      "--max-filesize",
+      "20000000",
+      "-o",
+      cache_path,
+      url,
+    }
     if async.system(cmd, { text = true }).code ~= 0 then
       os.remove(cache_path)
       return nil

@@ -191,15 +191,6 @@ h.test("an image that is not a file is not drawn and not asked for", function()
   finish_test()
 end)
 
-h.test("remote images and Obsidian names are left alone for now", function()
-  reset()
-  local buf = open { "![x](https://example.test/a.png)", "![[wide.png]]" }
-  h.assert_eq(run(buf), {}, "nothing drawn")
-  -- `![[wide.png]]` is a name in a vault; relative to the note it is a file here, and is found.
-  h.assert_eq(store.peek "https://example.test/a.png", "missing", "the URL was not asked for")
-  finish_test()
-end)
-
 h.test("a wikilink embed that names a file next to the note is drawn", function()
   reset()
   local buf = open { "![[small.png|300]]" }

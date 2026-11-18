@@ -76,6 +76,34 @@ function M.resolve_local(src, dir)
   end)))
 end
 
+--- What to ask the store for, to show an image, and how to make it.
+---
+--- Nothing is waited for and nothing is searched for here: this runs on every render. A URL is its own key;
+--- a file is found with one `stat` per candidate; a name that is not a file next to the note, in a note that is in
+--- an Obsidian vault, is the vault's to look up, which the store does once and remembers.
+---@param item render-markdown-images.ImageItem
+---@param dir string the directory of the note
+---@return string? key, render-markdown-images.Spec? spec nil spec: the store works out what the key is
+function M.source_key(item, dir)
+  local image = require "render-markdown-images.image"
+  local src = item.src
+  if image.is_url(src) then
+    -- Badges are not worth a download, and GIFs and videos cannot be shown.
+    if image.is_badge_url(src) or image.is_unsupported_format(src) then return nil end
+    return src, nil
+  end
+  -- Other schemes (data:, mailto:, ...) are not files.
+  if src:match "^%a[%w+.-]*:" then return nil end
+  if image.is_unsupported_format(src) then return nil end
+
+  local path = M.resolve_local(src, dir)
+  if path then return path, nil end
+
+  local root = require("render-markdown-images.obsidian").find_vault_root(dir)
+  if root then return ("vault:%s:%s"):format(root, src), { kind = "vault", name = src, dir = dir } end
+  return nil
+end
+
 -- ============================================================================
 -- Replace mode
 -- ============================================================================
@@ -172,17 +200,15 @@ end
 ---@param context? table
 ---@param ready render-markdown-images.Ready[]
 local function collect_images(ctx, config, context, ready)
-  local image = require "render-markdown-images.image"
   local discover = require "render-markdown-images.discover"
   local store = require "render-markdown-images.store"
   local dir = base_dir(ctx.buf)
   local replace = config.images.mode == "replace" and M.can_replace()
 
   for _, item in ipairs(discover.inline(ctx.buf, ctx.root, { filter = in_view(context) })) do
-    -- Remote images and Obsidian vault names are not drawn yet.
-    local path = not image.is_url(item.src) and M.resolve_local(item.src, dir) or nil
-    if path then
-      local status, entry = store.get(path, ctx.buf)
+    local key, spec = M.source_key(item, dir)
+    if key then
+      local status, entry = store.get(key, ctx.buf, spec)
       if status == "ready" then
         ready[#ready + 1] = {
           -- Under a table, not inside it: a gap between two rows would break the table.

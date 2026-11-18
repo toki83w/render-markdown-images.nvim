@@ -2,6 +2,7 @@
 --
 --   nvim -u scripts/demo_below.lua scripts/demo_below.md
 --   RMI_MODE=replace nvim -u scripts/demo_below.lua scripts/demo_below.md
+--   nvim -u scripts/demo_below.lua tests/fixtures/vault/notes/note.md   (an Obsidian vault)
 --
 -- With RMI_MODE=replace the source of every image and diagram is hidden and the picture takes its place;
 -- put the cursor on it and the source comes back, move away and the picture returns.
