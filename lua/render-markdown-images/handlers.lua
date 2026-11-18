@@ -166,7 +166,11 @@ local function draw(buf, context, ready, shared, last)
   if shared and not last then return {} end
   local win = render_window(context, buf)
   if not win then return {} end
-  return require("render-markdown-images.marks").build(win, ready)
+  local result = require("render-markdown-images.marks").build(win, ready)
+  local lifecycle = require "render-markdown-images.lifecycle"
+  lifecycle.drawn(buf, #result > 0)
+  lifecycle.schedule_prune()
+  return result
 end
 
 --- Whether there is anything to do for this buffer. The terminal is not asked whether it shows images:
@@ -304,6 +308,7 @@ end
 function M.parse(ctx)
   local config = active(ctx)
   if not config then return {} end
+  require("render-markdown-images.lifecycle").ensure()
   local context = request_context(ctx.buf)
   local ready, shared = collector(context)
   collect_images(ctx, config, context, ready)

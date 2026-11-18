@@ -15,6 +15,7 @@ local M = {}
 ---@param opts? table
 function M.setup(opts)
   require("render-markdown-images.config").setup(opts)
+  require("render-markdown-images.lifecycle").ensure()
 end
 
 --- Take over downloading remote images, for what curl cannot fetch (an address that needs a token, say).

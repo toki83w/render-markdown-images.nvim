@@ -325,7 +325,6 @@ test("nothing written moves or saves the cursor", function()
   image.delete_virtual_placement(101, 1)
   image.delete_image(101)
   image.delete_images { 102, 103 }
-  image.delete_all()
   local out = captured_output()
   assert_true(not out:find "\x1b%[%d*;?%d*[Hsu]", "no CSI cursor position, save or restore")
   assert_true(not out:find("2026", 1, true), "no synchronized-update bracket")
@@ -335,19 +334,6 @@ end)
 -- ============================================================================
 -- delete: escape sequence tests
 -- ============================================================================
-
-test("delete_all: generates delete-all sequence", function()
-  setup_capture()
-  image.delete_all()
-
-  local seqs = parse_kitty_sequences(captured_output())
-  assert_eq(#seqs, 1, "should produce one sequence")
-
-  local p = parse_params(seqs[1].params)
-  assert_eq(p.a, "d", "action should be 'd' (delete)")
-  assert_eq(p.d, "A", "delete target should be 'A' (all images)")
-  teardown()
-end)
 
 test("delete_image: generates correct single-image delete", function()
   setup_capture()
@@ -392,19 +378,6 @@ test("delete_images: does nothing for empty list", function()
   setup_capture()
   image.delete_images {}
   assert_eq(#captured, 0, "should not write anything for empty list")
-  teardown()
-end)
-
--- ============================================================================
--- clear_all: session-level clear
--- ============================================================================
-
-test("clear_all: generates delete-all and sets up autocmd", function()
-  setup_capture()
-  image.clear_all()
-
-  local output = captured_output()
-  assert_match(output, "a=d,d=A", "should contain delete-all sequence")
   teardown()
 end)
 

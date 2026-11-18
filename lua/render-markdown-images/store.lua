@@ -148,7 +148,7 @@ end
 
 --- Ask for `buf` to be rendered again, shortly. Asks made while one is pending join it.
 ---@param buf integer
-local function request_render(buf)
+function M.request_render(buf)
   if renders[buf] then return end
   renders[buf] = vim.defer_fn(function()
     renders[buf] = nil
@@ -204,7 +204,7 @@ local function attempt_done(entry, ok, result, fatal, log_id)
     local bufs = entry.bufs
     entry.bufs = {}
     for buf in pairs(bufs) do
-      request_render(buf)
+      M.request_render(buf)
     end
   elseif fatal or entry.attempts > M.limits.retries then
     entry.status, entry.err = "failed", tostring(result)
@@ -388,6 +388,39 @@ function M.peek(key)
   local entry = entries[key]
   if not entry then return "missing", nil end
   return entry.status, entry
+end
+
+--- The Kitty ids of the images this store has sent to the terminal.
+---@return integer[]
+function M.image_ids()
+  local ids = {}
+  for _, entry in pairs(entries) do
+    if entry.id then ids[#ids + 1] = entry.id end
+  end
+  table.sort(ids)
+  return ids
+end
+
+--- Forget every entry of a kind, and delete its images from the terminal. They are asked for again, and made again,
+--- the next time something needs them: for diagrams drawn in colours that are no longer the editor's.
+---@param kind "file"|"url"|"vault"|"mermaid"|"plantuml"
+---@return integer forgotten
+function M.invalidate(kind)
+  local ids, forgotten = {}, 0
+  for key, entry in pairs(entries) do
+    if entry.spec.kind == kind then
+      if entry.id then ids[#ids + 1] = entry.id end
+      entries[key] = nil
+      forgotten = forgotten + 1
+    end
+  end
+  if forgotten > 0 then
+    queue = vim.tbl_filter(function(key)
+      return entries[key] ~= nil
+    end, queue)
+    image.delete_images(ids)
+  end
+  return forgotten
 end
 
 --- Stop owing `buf` a re-render, for a buffer that is going away.

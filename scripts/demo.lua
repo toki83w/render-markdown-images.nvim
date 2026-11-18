@@ -26,7 +26,6 @@ local function say(lines)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 end
 
-image.clear_all()
 local w, h = image.image_dimensions(path)
 local id = image.transmit_image(path)
 if not (w and id) then

@@ -40,6 +40,7 @@ local image = require "render-markdown-images.image"
 local placeholder = require "render-markdown-images.placeholder"
 
 ---@class render-markdown-images.VirtualPlacement
+---@field id integer Kitty image id
 ---@field pid integer placement id, carried in the underline colour of the placeholder cells
 ---@field hl string highlight group that carries image and placement id
 
@@ -48,6 +49,11 @@ local placeholder = require "render-markdown-images.placeholder"
 ---@type table<string, render-markdown-images.VirtualPlacement>
 local placements = {}
 local last_pid = 0
+
+--- The placements each buffer's marks use, as of its last build: what is on its screen. A placement nobody uses
+--- any more, because the window changed size or the image left the document, can go.
+---@type table<integer, table<string, true>>
+local used = {}
 
 --- The size to draw an image at, in cells.
 ---
@@ -66,6 +72,14 @@ function M.size(win, indent, w, h)
   return image.calc_display_size(w, h, max_cols, max_rows)
 end
 
+---@param id integer
+---@param cols integer
+---@param rows integer
+---@return string
+function M.key(id, cols, rows)
+  return ("%d:%d:%d"):format(id, cols, rows)
+end
+
 --- The virtual placement for an image at a size, made if it does not exist yet, and its highlight
 --- group, defined again every time: a colorscheme change clears highlight groups.
 ---@param id integer
@@ -73,12 +87,12 @@ end
 ---@param rows integer
 ---@return render-markdown-images.VirtualPlacement
 function M.placement(id, cols, rows)
-  local key = ("%d:%d:%d"):format(id, cols, rows)
+  local key = M.key(id, cols, rows)
   local p = placements[key]
   if not p then
     last_pid = last_pid + 1
     image.create_virtual_placement(id, last_pid, cols, rows)
-    p = { pid = last_pid, hl = "" }
+    p = { id = id, pid = last_pid, hl = "" }
     placements[key] = p
   end
   p.hl = placeholder.ensure_hl(id, p.pid)
@@ -122,8 +136,11 @@ end
 ---@param images render-markdown-images.Ready[]
 ---@return render.md.Mark[]
 function M.build(win, images)
-  if #images == 0 or not vim.api.nvim_win_is_valid(win) then return {} end
+  if not vim.api.nvim_win_is_valid(win) then return {} end
   local buf = vim.api.nvim_win_get_buf(win)
+  local using = {} ---@type table<string, true>
+  used[buf] = using -- what this buffer draws now, nothing included
+  if #images == 0 then return {} end
 
   local ordered = vim.list_slice(images)
   table.sort(ordered, function(a, b)
@@ -154,6 +171,7 @@ function M.build(win, images)
   image.begin_batch() -- new placements go out in one write
   for _, img in ipairs(ordered) do
     local cols, rows = M.size(win, img.indent, img.w, img.h)
+    using[M.key(img.id, cols, rows)] = true
     local lines = M.lines(M.placement(img.id, cols, rows), cols, rows, img.indent)
     local hide = img.hide
     if not hide then
@@ -189,6 +207,44 @@ function M.build(win, images)
   return marks
 end
 
+--- Delete the virtual placements that no buffer uses, and their highlight groups. The images stay: placing
+--- one again is cheap, sending it again is not.
+---@return integer deleted
+function M.prune()
+  local wanted = {} ---@type table<string, true>
+  for _, keys in pairs(used) do
+    for key in pairs(keys) do
+      wanted[key] = true
+    end
+  end
+  local deleted = 0
+  image.begin_batch()
+  for key, p in pairs(placements) do
+    if not wanted[key] then
+      image.delete_virtual_placement(p.id, p.pid)
+      placeholder.delete_hl(p.hl)
+      placements[key] = nil
+      deleted = deleted + 1
+    end
+  end
+  image.flush_batch()
+  return deleted
+end
+
+--- A buffer is gone: what it used is no longer in use.
+---@param buf integer
+function M.forget_buf(buf)
+  used[buf] = nil
+end
+
+--- Define the highlight groups of the placements again. `:colorscheme` clears every group, and the cells would
+--- lose the colours that carry their image and placement ids.
+function M.refresh_highlights()
+  for _, p in pairs(placements) do
+    placeholder.ensure_hl(p.id, p.pid)
+  end
+end
+
 --- How many virtual placements exist, for tests and health checks.
 ---@return integer
 function M.placement_count()
@@ -199,6 +255,7 @@ end
 function M.reset()
   placements = {}
   last_pid = 0
+  used = {}
 end
 
 return M

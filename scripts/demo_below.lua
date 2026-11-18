@@ -11,7 +11,7 @@
 -- directly or in tmux (>= 3.3, `set -g allow-passthrough on`). The terminal is not asked whether it can:
 -- having the plugin configured says so. `:Diagnose` reports what it would answer. render-markdown.nvim is taken from
 -- $RENDER_MARKDOWN_PATH, ~/software/neovim_plugins/render-markdown.nvim, or lazy.nvim's data directory.
--- Edit the document, resize the window, `:set number`: the images follow.
+-- Edit the document, resize the window, `:set number`, `:colorscheme ...`, `:set background=light`: the images follow.
 
 local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
 

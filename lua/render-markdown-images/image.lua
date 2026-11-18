@@ -372,6 +372,14 @@ local function mermaid_theme_args()
   end
 end
 
+--- What a Mermaid diagram's colours depend on: theme and background. A diagram rendered under another
+--- one is not the one for the colours now.
+---@return string
+function M.mermaid_theme()
+  local theme, bg_hex = mermaid_theme_args()
+  return theme .. "|" .. bg_hex
+end
+
 --- Supersampling factor for mermaid diagrams, matching mermaid-cli's `-s 2`.
 --- Applied for the mmdr renderer, which otherwise renders at natural size.
 --- Part of the cache key so changing it invalidates previously cached PNGs.
@@ -675,8 +683,11 @@ end
 -- the later sections left reset_cache() writing to accidental globals instead.
 local _convert_cmd = nil
 local _convert_checked = false
-local _image_id = 100
-local _session_cleared = false
+--- Kitty image ids are one namespace per terminal window, and every Neovim in the window (tmux panes, say)
+--- draws into it: two that both started at 101 would overwrite each other's images. Each takes its own range of
+--- 4000 ids, from its process id. Ids are 24 bits because they travel in a colour.
+local ID_BASE = 100 + (uv.os_getpid() % 4000) * 4000
+local _image_id = ID_BASE
 
 --- Send `payload` to the terminal and call `on_response(sequence)` for every
 --- `TermResponse` until it returns true or `opts.timeout` ms (default 1000)
@@ -836,7 +847,6 @@ function M.reset_cache()
   _probing = false
   _probe_answer = nil
   _probe_timeout_ms = PROBE_TIMEOUT_MS
-  _session_cleared = false
   _convert_cmd = nil
   _convert_checked = false
   _plantuml_cmd = nil
@@ -859,7 +869,7 @@ function M._set_probe_timeout(ms)
   _probe_timeout_ms = ms
 end
 
---- Reset image ID counter for testing.
+--- Start the image ids at 100 again, so that a test knows which ids it gets.
 function M._reset_image_id()
   _image_id = 100
 end
@@ -1429,11 +1439,6 @@ function M.delete_virtual_placement(image_id, placement_id)
   term_write(string.format("\x1b_Ga=d,d=i,i=%d,p=%d,q=2\x1b\\", image_id, placement_id))
 end
 
---- Delete all images and placements from terminal memory.
-function M.delete_all()
-  term_write "\x1b_Ga=d,d=A,q=2\x1b\\"
-end
-
 --- Delete a stored image from terminal memory: its placements, virtual ones
 --- included, and its data (`d=I`; lowercase would leave the data behind).
 ---@param image_id integer
@@ -1450,26 +1455,6 @@ function M.delete_images(image_ids)
     table.insert(parts, string.format("\x1b_Ga=d,d=I,i=%d\x1b\\", id))
   end
   term_write(table.concat(parts))
-end
-
---- Clear all images from terminal memory (once per Neovim session).
---- Removes stale image data from previous sessions that may interfere
---- with new transmissions using the same ID range.
-function M.clear_all()
-  if _session_cleared then return end
-  _session_cleared = true
-  -- d=A: delete all stored image data and placements
-  term_write "\x1b_Ga=d,d=A\x1b\\"
-  -- Reset the ID counter to ensure clean state
-  _image_id = 100
-
-  -- Ensure images are cleaned up when Neovim exits (e.g. on :restart)
-  vim.api.nvim_create_autocmd("VimLeavePre", {
-    once = true,
-    callback = function()
-      M.delete_all()
-    end,
-  })
 end
 
 return M
