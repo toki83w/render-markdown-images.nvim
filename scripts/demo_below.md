@@ -1,4 +1,7 @@
-# Images below their lines
+# Images and diagrams
+
+Start with `RMI_MODE=replace` to hide the sources: the picture takes their place, and the source comes
+back while the cursor is on it. Otherwise each picture is drawn under its source.
 
 A picture on its own line, drawn under it:
 

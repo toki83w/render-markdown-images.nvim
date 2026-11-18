@@ -7,7 +7,6 @@ package.path = vim.fn.getcwd() .. "/lua/?.lua;" .. vim.fn.getcwd() .. "/lua/?/in
 vim.env.XDG_CACHE_HOME = vim.fn.tempname()
 
 local image = require "render-markdown-images.image"
-local cfg = require "render-markdown-images.config"
 local uv = vim.uv or vim.loop
 
 local pass_count = 0
@@ -62,13 +61,6 @@ local function test(name, fn)
   end
 end
 
---- Configure the plugin the way `require("render-markdown-images").setup` does.
----@param opts? table
-local function set_config(opts)
-  cfg.setup(opts)
-  image.setup()
-end
-
 -- ============================================================================
 -- Test helper: capture escape sequences written by image module
 --
@@ -85,7 +77,6 @@ local function setup_capture()
   vim.api.nvim_ui_send = function(data)
     table.insert(captured, data)
   end
-  image._set_kitty_supported(true)
   image._set_in_tmux(false) -- keep the output unwrapped even when the suite runs inside tmux
   image._reset_image_id()
 end
@@ -95,7 +86,6 @@ local function teardown()
     vim.api.nvim_ui_send = _orig_ui_send
     _orig_ui_send = nil
   end
-  image._set_kitty_supported(nil)
   image.reset_cache()
 end
 
@@ -243,15 +233,6 @@ test("transmit_image: sequential IDs are monotonically increasing", function()
   local id2 = image.transmit_image(test_png)
   assert_true(id1 ~= nil and id2 ~= nil, "both should succeed")
   assert_true(id2 > id1, "second ID should be greater than first")
-  teardown()
-end)
-
-test("transmit_image: returns nil when kitty not supported", function()
-  setup_capture()
-  image._set_kitty_supported(false)
-  local id = image.transmit_image(test_png)
-  assert_nil(id, "should return nil when kitty not supported")
-  assert_eq(#captured, 0, "should not write anything")
   teardown()
 end)
 
@@ -540,13 +521,6 @@ test("get_cell_size: returns nil or table without crashing (no override)", funct
     result == nil or (type(result) == "table" and result.cell_w and result.cell_h),
     "get_cell_size should return nil or {cell_w, cell_h}"
   )
-end)
-
-test("supports_kitty: returns boolean without crashing", function()
-  image._set_kitty_supported(nil) -- clear cache so detection runs
-  local result = image.supports_kitty()
-  assert_true(result == true or result == false, "supports_kitty should return a boolean")
-  image._set_kitty_supported(nil)
 end)
 
 -- ============================================================================
@@ -942,14 +916,6 @@ test("create_virtual_placement: clamps cols and rows to the diacritics table", f
   teardown()
 end)
 
-test("create_virtual_placement: does nothing when kitty not supported", function()
-  setup_capture()
-  image._set_kitty_supported(false)
-  image.create_virtual_placement(101, 7, 20, 5)
-  assert_eq(#captured, 0, "should not write anything")
-  teardown()
-end)
-
 test("delete_virtual_placement: exact bytes outside tmux", function()
   setup_capture()
   image.delete_virtual_placement(101, 7)
@@ -969,14 +935,6 @@ test("delete_virtual_placement: wrapped in the passthrough envelope inside tmux"
   teardown()
 end)
 
-test("delete_virtual_placement: does nothing when kitty not supported", function()
-  setup_capture()
-  image._set_kitty_supported(false)
-  image.delete_virtual_placement(101, 7)
-  assert_eq(#captured, 0, "should not write anything")
-  teardown()
-end)
-
 -- ============================================================================
 -- Protocol probe: how this plugin finds out whether images work
 --
@@ -991,16 +949,20 @@ local OK_REPLY = "\x1b_Gi=31;OK\x1b\\"
 local DA1_REPLY = "\x1b[?62;4;22c"
 local PROBE_QUERY = "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\"
 
+--- Whether the terminal answered the graphics query (asks it, if it has not been asked).
+---@return boolean
+local function probe_ok()
+  return image.probe() == "ok"
+end
+
 --- Run `fn(h)` against a fresh probe, as if Neovim had a UI (or not), inside
 --- tmux (or not), and restore everything after.
----@param opts { tmux?: boolean, termguicolors?: boolean, enabled?: "auto"|boolean, replies?: string[], no_ui?: boolean, timeout?: integer, no_tty_request?: boolean }
+---@param opts { tmux?: boolean, replies?: string[], no_ui?: boolean, timeout?: integer, no_tty_request?: boolean }
 ---@param fn fun(h: table)
 local function with_probe(opts, fn)
   local saved = {
     ui_send = vim.api.nvim_ui_send,
     list_uis = vim.api.nvim_list_uis,
-    termguicolors = vim.o.termguicolors,
-    enabled = cfg.get().enabled,
     request = tty.request,
   }
   local h = { sent = {} }
@@ -1017,13 +979,11 @@ local function with_probe(opts, fn)
   vim.api.nvim_list_uis = function()
     return opts.no_ui and {} or { {} }
   end
-  vim.o.termguicolors = opts.termguicolors ~= false
   if opts.no_tty_request then tty.request = nil end
 
   image.reset_cache()
   image._set_in_tmux(opts.tmux or false)
   image._set_probe_timeout(opts.timeout or 100)
-  set_config { enabled = opts.enabled == nil and "auto" or opts.enabled }
 
   function h.queries()
     return #h.sent
@@ -1033,33 +993,31 @@ local function with_probe(opts, fn)
 
   vim.api.nvim_ui_send = saved.ui_send
   vim.api.nvim_list_uis = saved.list_uis
-  vim.o.termguicolors = saved.termguicolors
   if opts.no_tty_request then tty.request = saved.request end
-  set_config { enabled = saved.enabled }
   image.reset_cache()
   if not ok then error(err, 0) end
 end
 
-test("probe: an answer to the graphics query turns images on, and is asked as query then DA1", function()
+test("probe: an answer to the graphics query is ok, and is asked as query then DA1", function()
   with_probe({ replies = { OK_REPLY, DA1_REPLY } }, function(h)
-    assert_true(image.supports_kitty(), "the terminal answered OK")
+    assert_true(probe_ok(), "the terminal answered OK")
     assert_eq(image.probe_result(), "ok", "result")
     assert_eq(h.sent, { PROBE_QUERY .. "\x1b[c" }, "one write: the query, then DA1")
   end)
 end)
 
-test("probe: DA1 before any graphics answer means no protocol, outside tmux", function()
+test("probe: DA1 before any graphics answer means no protocol (da1_first), outside tmux", function()
   with_probe({ replies = { DA1_REPLY } }, function(h)
-    assert_true(not image.supports_kitty(), "images are off")
+    assert_true(not probe_ok(), "images are off")
     assert_eq(image.probe_result(), "da1_first", "result")
-    assert_true(not image.supports_kitty(), "and stay off")
+    assert_true(not probe_ok(), "and stay off")
     assert_eq(h.queries(), 1, "the answer is kept: no second question")
   end)
 end)
 
 test("probe: inside tmux DA1 is tmux's own and is ignored; the graphics answer decides", function()
   with_probe({ tmux = true, replies = { DA1_REPLY, OK_REPLY } }, function(h)
-    assert_true(image.supports_kitty(), "the OK after the DA1 counts")
+    assert_true(probe_ok(), "the OK after the DA1 counts")
     assert_eq(image.probe_result(), "ok", "result")
     assert_eq(h.queries(), 1, "asked once")
   end)
@@ -1067,7 +1025,7 @@ end)
 
 test("probe: inside tmux the query is wrapped for passthrough, and DA1 is not asked", function()
   with_probe({ tmux = true, replies = { OK_REPLY } }, function(h)
-    image.supports_kitty()
+    probe_ok()
     assert_eq(
       h.sent,
       { "\x1bPtmux;\x1b\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\x1b\\\x1b\\" },
@@ -1079,7 +1037,7 @@ end)
 test("probe: silence outside tmux is no reply, after the timeout", function()
   with_probe({ timeout = 150 }, function()
     local t0 = vim.uv.hrtime()
-    assert_true(not image.supports_kitty(), "images are off")
+    assert_true(not probe_ok(), "images are off")
     local ms = (vim.uv.hrtime() - t0) / 1e6
     assert_eq(image.probe_result(), "no_reply", "result")
     assert_true(ms >= 100 and ms < 1000, "it waited for the timeout, no longer (" .. math.floor(ms) .. " ms)")
@@ -1088,10 +1046,10 @@ end)
 
 test("probe: silence inside tmux is off after the timeout, and is not asked again", function()
   with_probe({ tmux = true, timeout = 100 }, function(h)
-    assert_true(not image.supports_kitty(), "images are off")
+    assert_true(not probe_ok(), "images are off")
     assert_eq(image.probe_result(), "no_reply", "result")
     local t0 = vim.uv.hrtime()
-    assert_true(not image.supports_kitty(), "still off")
+    assert_true(not probe_ok(), "still off")
     assert_true((vim.uv.hrtime() - t0) / 1e6 < 50, "the second answer is immediate")
     assert_eq(h.queries(), 1, "asked once")
   end)
@@ -1099,9 +1057,9 @@ end)
 
 test("probe: a positive answer is cached for the session", function()
   with_probe({ replies = { OK_REPLY } }, function(h)
-    assert_true(image.supports_kitty(), "first")
-    assert_true(image.supports_kitty(), "second")
-    assert_true(image.supports_kitty(), "third")
+    assert_true(probe_ok(), "first")
+    assert_true(probe_ok(), "second")
+    assert_true(probe_ok(), "third")
     assert_eq(h.queries(), 1, "asked once")
   end)
 end)
@@ -1109,7 +1067,7 @@ end)
 test("probe: an answer about another image, or an error, is not an answer", function()
   for _, reply in ipairs { "\x1b_Gi=7;OK\x1b\\", "\x1b_Gi=31;ENOENT:no such file\x1b\\", "\x1b_Gi=310;OK\x1b\\" } do
     with_probe({ replies = { reply }, timeout = 80 }, function()
-      assert_true(not image.supports_kitty(), vim.inspect(reply) .. " does not turn images on")
+      assert_true(not probe_ok(), vim.inspect(reply) .. " does not turn images on")
       assert_eq(image.probe_result(), "no_reply", "and the probe goes on waiting")
     end)
   end
@@ -1117,49 +1075,19 @@ end)
 
 test("probe: an answer with more parameters is still the answer", function()
   with_probe({ replies = { "\x1b_Gi=31,p=1;OK\x1b\\" } }, function()
-    assert_true(image.supports_kitty(), "i=31 among others")
-  end)
-end)
-
-test("probe: enabled = true asks nothing and is on", function()
-  with_probe({ enabled = true }, function(h)
-    assert_true(image.supports_kitty(), "on")
-    assert_eq(h.sent, {}, "no bytes sent")
-    assert_eq(image.probe_result(), "not_asked", "result")
-  end)
-end)
-
-test("probe: enabled = false asks nothing and is off, whatever the terminal says", function()
-  with_probe({ enabled = false, replies = { OK_REPLY } }, function(h)
-    assert_true(not image.supports_kitty(), "off")
-    assert_eq(h.sent, {}, "no bytes sent")
-  end)
-end)
-
-test("probe: 'termguicolors' off is off, and turning it on later works without asking again", function()
-  with_probe({ termguicolors = false, replies = { OK_REPLY } }, function(h)
-    assert_true(not image.supports_kitty(), "off without 24-bit colour")
-    assert_eq(image.probe_result(), "ok", "though the terminal does speak the protocol")
-    vim.o.termguicolors = true
-    assert_true(image.supports_kitty(), "on once 'termguicolors' is on")
-    assert_eq(h.queries(), 1, "the terminal was asked once")
-  end)
-  with_probe({ termguicolors = false, enabled = true }, function()
-    assert_true(not image.supports_kitty(), "enabled = true does not override it")
-    vim.o.termguicolors = true
-    assert_true(image.supports_kitty(), "and it can be turned on later")
+    assert_true(probe_ok(), "i=31 among others")
   end)
 end)
 
 test("probe: with no UI attached nothing is asked and nothing is kept", function()
   with_probe({ no_ui = true, replies = { OK_REPLY } }, function(h)
-    assert_true(not image.supports_kitty(), "off")
+    assert_true(not probe_ok(), "off")
     assert_eq(h.sent, {}, "no bytes sent")
     assert_eq(image.probe_result(), "not_asked", "result")
     vim.api.nvim_list_uis = function()
       return { {} }
     end
-    assert_true(image.supports_kitty(), "a UI that attaches later is asked")
+    assert_true(probe_ok(), "a UI that attaches later is asked")
   end)
 end)
 
@@ -1170,11 +1098,11 @@ test("probe: a second caller during the wait gets the same answer and asks nothi
     vim.api.nvim_ui_send = function(data)
       -- Queued ahead of the terminal's answer, and run by the probe's own wait.
       vim.schedule(function()
-        other = image.supports_kitty()
+        other = probe_ok()
       end)
       send(data)
     end
-    assert_true(image.supports_kitty(), "first caller")
+    assert_true(probe_ok(), "first caller")
     vim.wait(100, function()
       return other ~= nil
     end)
@@ -1183,36 +1111,9 @@ test("probe: a second caller during the wait gets the same answer and asks nothi
   end)
 end)
 
-test("probe: an invalid `enabled` is an error; every valid one is accepted", function()
-  local saved = cfg.get().enabled
-  for _, bad in ipairs { "yes", "on", 1, {} } do
-    local ok, err = pcall(set_config, { enabled = bad })
-    assert_true(not ok, vim.inspect(bad) .. " is refused")
-    assert_match(tostring(err), "enabled", "and the error names the option")
-    assert_eq(cfg.get().enabled, saved, "which leaves the setting alone")
-  end
-  for _, good in ipairs { "auto", true, false } do
-    local ok = pcall(set_config, { enabled = good })
-    assert_true(ok, vim.inspect(good) .. " is accepted")
-    assert_eq(cfg.get().enabled, good, "and stored")
-  end
-  set_config { enabled = saved }
-end)
-
-test("probe: image.setup() after a config change decides again, without asking the terminal again", function()
-  with_probe({ replies = { OK_REPLY } }, function(h)
-    assert_true(image.supports_kitty(), "on")
-    set_config { enabled = false }
-    assert_true(not image.supports_kitty(), "off as soon as it is disabled")
-    set_config { enabled = "auto" }
-    assert_true(image.supports_kitty(), "on again")
-    assert_eq(h.queries(), 1, "the terminal's answer was kept")
-  end)
-end)
-
 test("probe: reset_cache forgets the answer and the test overrides", function()
   with_probe({ replies = { OK_REPLY } }, function(h)
-    image.supports_kitty()
+    probe_ok()
     assert_eq(image.probe_result(), "ok", "answered")
     image.reset_cache()
     assert_eq(image.probe_result(), "not_asked", "forgotten")
@@ -1220,7 +1121,7 @@ test("probe: reset_cache forgets the answer and the test overrides", function()
     image.reset_cache()
     assert_eq(image.in_tmux(), vim.env.TMUX ~= nil and vim.env.TMUX ~= "", "in_tmux override cleared: back to $TMUX")
     image._set_in_tmux(false)
-    image.supports_kitty()
+    probe_ok()
     assert_eq(h.queries(), 2, "and the terminal is asked again")
   end)
 end)
@@ -1236,7 +1137,7 @@ end
 test("probe, shim (Neovim without vim.tty.request): answer, and the listener is gone after", function()
   with_probe({ no_tty_request = true, replies = { OK_REPLY } }, function()
     local before = termresponse_autocmds()
-    assert_true(image.supports_kitty(), "on")
+    assert_true(probe_ok(), "on")
     assert_eq(termresponse_autocmds(), before, "the TermResponse autocommand was removed")
   end)
 end)
@@ -1244,7 +1145,7 @@ end)
 test("probe, shim: DA1 first, and the listener is gone after", function()
   with_probe({ no_tty_request = true, replies = { DA1_REPLY } }, function()
     local before = termresponse_autocmds()
-    assert_true(not image.supports_kitty(), "off")
+    assert_true(not probe_ok(), "off")
     assert_eq(image.probe_result(), "da1_first", "result")
     assert_eq(termresponse_autocmds(), before, "the TermResponse autocommand was removed")
   end)
@@ -1253,7 +1154,7 @@ end)
 test("probe, shim: silence times out, and the listener is gone after", function()
   with_probe({ no_tty_request = true, timeout = 80 }, function()
     local before = termresponse_autocmds()
-    assert_true(not image.supports_kitty(), "off")
+    assert_true(not probe_ok(), "off")
     assert_eq(image.probe_result(), "no_reply", "result")
     -- The timer's cleanup is scheduled; give it its turn.
     vim.wait(50, function()
@@ -1280,7 +1181,7 @@ test("probe, vim.tty.request (stubbed): used when present, with the timeout and 
   end
   -- The stub sends nothing itself; DA1 is what a terminal outside tmux sends back.
   local ok, err = pcall(with_probe, { timeout = 120 }, function(h)
-    assert_true(image.supports_kitty(), "on")
+    assert_true(probe_ok(), "on")
     assert_eq(#calls, 1, "one request")
     assert_eq(calls[1].payload, PROBE_QUERY .. "\x1b[c", "the query and DA1 as the payload")
     assert_eq(calls[1].timeout, 120, "with the probe timeout")
@@ -1302,7 +1203,7 @@ test("probe, vim.tty.request (stubbed): DA1 first is read as no protocol", funct
     return 1
   end
   local ok, err = pcall(with_probe, {}, function()
-    assert_true(not image.supports_kitty(), "DA1 first: off")
+    assert_true(not probe_ok(), "DA1 first: off")
     assert_eq(image.probe_result(), "da1_first", "result")
   end)
   tty.request = saved

@@ -216,9 +216,6 @@ end
 local function pipeline(entry, settle)
   local key, kind = entry.key, entry.spec.kind
   -- These are refusals, not failures: nothing went wrong, so nothing is logged.
-  if not image.supports_kitty() then
-    return settle(false, "the terminal does not support Kitty graphics", true, false)
-  end
   if (kind == "file" or kind == "url") and image.is_unsupported_format(key) then
     return settle(false, "unsupported format: " .. key, true, false)
   end
@@ -359,6 +356,26 @@ function M.forget_buf(buf)
     stop_timer(timer)
     renders[buf] = nil
   end
+end
+
+--- Every entry with its status, for `:checkhealth` and for finding out why something is not shown.
+---@return { key: string, kind: string, status: render-markdown-images.Status, attempts: integer, err?: string, id?: integer }[]
+function M.snapshot()
+  local out = {}
+  for key, entry in pairs(entries) do
+    out[#out + 1] = {
+      key = key,
+      kind = entry.spec.kind,
+      status = entry.status,
+      attempts = entry.attempts,
+      err = entry.err,
+      id = entry.id,
+    }
+  end
+  table.sort(out, function(a, b)
+    return a.key < b.key
+  end)
+  return out
 end
 
 --- Counts, for tests and health checks.

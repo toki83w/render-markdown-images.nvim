@@ -1,9 +1,10 @@
 --- Find what to draw: images in inline markdown and diagram fences in block markdown.
 ---
---- Both functions turn a treesitter root into a list of plain items. They read the
+--- Both functions turn the root of the block markdown tree into a list of plain items. They read the
 --- buffer and the tree and nothing else: no files are touched, no work is started and
 --- nothing is cached, so the same input always gives the same items. The queries live
---- in `queries/markdown_inline/rmi_images.scm` and `queries/markdown/rmi_diagrams.scm`.
+--- in `queries/markdown/rmi_inlines.scm` (where the inline text is), `queries/markdown_inline/rmi_images.scm`
+--- (the images in it) and `queries/markdown/rmi_diagrams.scm`.
 ---
 --- All rows and columns are 0-based and refer to the buffer. Columns are byte offsets;
 --- `end_col` is exclusive.
@@ -31,6 +32,7 @@
 
 ---@class render-markdown-images.DiscoverOpts
 ---@field range? { [1]: integer, [2]: integer } only items touching these rows, both inclusive
+---@field filter? fun(node: TSNode): boolean for `inline`: only the inline nodes (paragraphs, table cells) it accepts
 
 ---@class render-markdown-images.Discover
 local M = {}
@@ -137,21 +139,38 @@ local function display_width(line, col)
   return vim.fn.strdisplaywidth(line:sub(1, col))
 end
 
---- Images in an inline markdown tree.
+--- The images in the text of one inline node.
+---
+--- The text is parsed here, as markdown_inline, instead of looking in the tree Neovim injects for the node.
+--- That tree is the same text parsed the same way, and it comes with a catch: after partial parses
+--- (the highlighter's, render-markdown's) `for_each_tree` can give another paragraph's tree for it. The
+--- text of a node is what it is.
 ---@param buf integer
----@param root TSNode root of a `markdown_inline` tree
----@param opts? render-markdown-images.DiscoverOpts
+---@param node TSNode an `inline` or `pipe_table_cell` of the block tree
+---@param query vim.treesitter.Query the images query, for markdown_inline
+---@param line fun(row: integer): string
 ---@return render-markdown-images.ImageItem[]
-function M.inline(buf, root, opts)
-  local query = vim.treesitter.query.get("markdown_inline", "rmi_images")
-  if not query then return {} end
-  local line = line_reader(buf)
-  local first, stop = match_rows(opts and opts.range)
+local function images_in(buf, node, query, line)
+  local text = vim.treesitter.get_node_text(node, buf)
+  if not text:find("![", 1, true) then return {} end
+  local ok, string_parser = pcall(vim.treesitter.get_string_parser, text, "markdown_inline")
+  if not ok or not string_parser then return {} end
+  local tree = string_parser:parse()[1]
+  if not tree then return {} end
+  local node_row, node_col = node:range()
+
+  --- Buffer position of a position in `text`: the text starts at the node, and later lines are whole lines.
+  ---@param row integer
+  ---@param col integer
+  ---@return integer, integer
+  local function place(row, col)
+    return node_row + row, row == 0 and node_col + col or col
+  end
 
   ---@type table<integer, { image: TSNode, dest?: TSNode, embed?: TSNode }>
   local found = {}
   local order = {} ---@type integer[]
-  for _, match in query:iter_matches(root, buf, first, stop) do
+  for _, match in query:iter_matches(tree:root(), text) do
     local c = captures(query, match)
     local id = c.image:id()
     if not found[id] then
@@ -166,10 +185,11 @@ function M.inline(buf, root, opts)
   for _, id in ipairs(order) do
     local f = found[id]
     local is_embed = f.dest == nil
-    local text = vim.treesitter.get_node_text(f.dest or f.embed, buf)
-    local src = M.clean_src(text, is_embed)
+    local src = M.clean_src(vim.treesitter.get_node_text(f.dest or f.embed, text), is_embed)
     if src ~= "" then
-      local row, col, end_row, end_col = f.image:range()
+      local r1, c1, r2, c2 = f.image:range()
+      local row, col = place(r1, c1)
+      local end_row, end_col = place(r2, c2)
       local block = leaf_block(buf, row, col)
       local block_row, block_col = 0, 0
       if block then
@@ -207,6 +227,27 @@ function M.inline(buf, root, opts)
         indent = block and display_width(line(block_row), content_col(line(block_row), block_col)) or 0,
       }
     end
+  end
+  return items
+end
+
+--- Images in a block markdown tree.
+---@param buf integer
+---@param root TSNode root of the `markdown` tree
+---@param opts? render-markdown-images.DiscoverOpts
+---@return render-markdown-images.ImageItem[]
+function M.inline(buf, root, opts)
+  local blocks = vim.treesitter.query.get("markdown", "rmi_inlines")
+  local images = vim.treesitter.query.get("markdown_inline", "rmi_images")
+  if not blocks or not images then return {} end
+  local line = line_reader(buf)
+  local first, stop = match_rows(opts and opts.range)
+  local filter = opts and opts.filter
+
+  local items = {} ---@type render-markdown-images.ImageItem[]
+  for _, match in blocks:iter_matches(root, buf, first, stop) do
+    local node = single(match[1])
+    if not filter or filter(node) then vim.list_extend(items, images_in(buf, node, images, line)) end
   end
 
   table.sort(items, function(a, b)

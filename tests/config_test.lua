@@ -13,7 +13,6 @@ end
 h.test("defaults", function()
   reset()
   h.assert_eq(config.get(), {
-    enabled = "auto",
     images = { mode = "below" },
     diagrams = { mode = "below", mermaid = true, plantuml = true },
     plantuml_server = nil,
@@ -34,7 +33,6 @@ h.test("setup merges over defaults", function()
   h.assert_eq(c.diagrams.mermaid, true, "diagrams.mermaid keeps default")
   h.assert_eq(c.diagrams.plantuml, false, "diagrams.plantuml overridden")
   h.assert_eq(c.plantuml_server, "http://localhost:8080", "plantuml_server set")
-  h.assert_eq(c.enabled, "auto", "enabled keeps default")
   reset()
 end)
 
@@ -53,14 +51,6 @@ h.test("setup is not cumulative", function()
   reset()
 end)
 
-h.test("enabled accepts auto, true and false", function()
-  for _, v in ipairs { "auto", true, false } do
-    rmi.setup { enabled = v }
-    h.assert_eq(config.get().enabled, v, "enabled = " .. vim.inspect(v))
-  end
-  reset()
-end)
-
 h.test("mode accepts below and replace", function()
   for _, m in ipairs { "below", "replace" } do
     rmi.setup { images = { mode = m }, diagrams = { mode = m } }
@@ -72,9 +62,6 @@ end)
 
 h.test("validation errors name the option", function()
   local P = "render-markdown-images: "
-  h.assert_error(function()
-    rmi.setup { enabled = "yes" }
-  end, P .. '`enabled` must be "auto", true or false', "enabled")
   h.assert_error(function()
     rmi.setup { images = { mode = "above" } }
   end, "`images.mode` must be", "images.mode")
@@ -108,6 +95,12 @@ h.test("unknown options are rejected", function()
   h.assert_error(function()
     rmi.setup { mode = "below" }
   end, "unknown option `mode`", "top level typo")
+  h.assert_error(function()
+    rmi.setup { enabled = true }
+  end, "unknown option `enabled`", "there is no switch: the terminal is not asked, and the handlers are the on/off")
+  h.assert_error(function()
+    rmi.setup { enabled = "auto" }
+  end, "unknown option `enabled`", "and no probe setting")
   h.assert_error(function()
     rmi.setup { images = { mod = "below" } }
   end, "unknown option `images.mod`", "nested typo")

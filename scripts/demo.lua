@@ -26,18 +26,6 @@ local function say(lines)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 end
 
-if not image.supports_kitty() then
-  say {
-    "render-markdown-images demo",
-    "",
-    "Images are off here: probe result = " .. image.probe_result() .. ", termguicolors = " .. tostring(
-      vim.o.termguicolors
-    ),
-    "(a terminal with Kitty graphics support is required)",
-  }
-  return
-end
-
 image.clear_all()
 local w, h = image.image_dimensions(path)
 local id = image.transmit_image(path)

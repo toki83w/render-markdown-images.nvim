@@ -5,6 +5,17 @@
 --- extmark at column 0 of that row. Each of those lines holds one row of the image's placeholder
 --- grid, so scrolling, wrapping and redrawing are Neovim's business and nothing is placed again after
 --- them. The source text stays visible.
+---
+--- Replace mode hides the source as well, in one of two ways:
+---
+---  - `lines`: the rows of the source are concealed whole (`conceal_lines`) and the image is handed
+---    to render-markdown as the `replace` of that mark. render-markdown then draws it as virtual
+---    lines above the next row that is not concealed, and only while the concealing mark is shown:
+---    when the cursor enters the source, anti-conceal drops the mark and the image goes with it.
+---  - `text`: for an image in the middle of text, only its `![...](...)` is concealed, and the image
+---    is virtual lines below that row, hidden together with the text.
+---
+--- Every mark of a replaced source has `conceal = true`, which is what lets anti-conceal hide it.
 
 ---@class render-markdown-images.Ready
 ---@field row integer row to draw below: the last row of the image's syntax, or of its table
@@ -13,6 +24,14 @@
 ---@field id integer Kitty image id
 ---@field w integer pixel width of the transmitted image
 ---@field h integer pixel height of the transmitted image
+---@field hide? render-markdown-images.Hide set in replace mode: the source this image stands in for
+
+---@class render-markdown-images.Hide
+---@field kind "lines"|"text" whole rows, or only the text of the span
+---@field start_row integer
+---@field start_col integer
+---@field end_row integer
+---@field end_col integer byte after the last character of the source, on `end_row`
 
 ---@class render-markdown-images.Marks
 local M = {}
@@ -82,12 +101,29 @@ function M.lines(p, cols, rows, indent)
   return lines
 end
 
---- Marks that draw `images` below their rows. Images on one row stack, left to right, in one mark.
+--- Whether `row` is the last row of the buffer, or the rows after it do not exist.
+---@param buf integer
+---@param row integer
+---@return boolean
+local function at_end(buf, row)
+  return row >= vim.api.nvim_buf_line_count(buf) - 1
+end
+
+--- Marks that draw `images`.
+---
+--- An image without `hide` goes below its row, its source left alone. Images on one row stack, left to
+--- right, in one mark. An image with `hide` replaces its source, see the top of this file.
+---
+--- At the end of the buffer there is no row to draw above, and render-markdown has nowhere to put what it
+--- generates, so a replaced source there is concealed by us and its image goes below the row before it,
+--- in a mark that stays when the cursor enters the source: the image is then above the source being edited.
+--- A source that is the whole buffer has no row before it; it is not replaced, the image goes below it.
 ---@param win integer window the buffer is shown in; it sets the size
 ---@param images render-markdown-images.Ready[]
 ---@return render.md.Mark[]
-function M.below(win, images)
+function M.build(win, images)
   if #images == 0 or not vim.api.nvim_win_is_valid(win) then return {} end
+  local buf = vim.api.nvim_win_get_buf(win)
 
   local ordered = vim.list_slice(images)
   table.sort(ordered, function(a, b)
@@ -96,16 +132,57 @@ function M.below(win, images)
   end)
 
   local marks = {} ---@type render.md.Mark[]
-  local current ---@type render.md.Mark?
+  ---@type table<string, render.md.Mark>
+  local stacks = {}
+
+  --- Add virtual lines below `row`; those added to the same row with the same `conceal` stack in one mark.
+  ---@param row integer
+  ---@param conceal boolean
+  ---@param lines table[]
+  local function below(row, conceal, lines)
+    local key = row .. (conceal and ":c" or ":s")
+    local stack = stacks[key]
+    if stack then
+      vim.list_extend(stack.opts.virt_lines, lines)
+    else
+      stack = { conceal = conceal, start_row = row, start_col = 0, opts = { virt_lines = lines } }
+      stacks[key] = stack
+      marks[#marks + 1] = stack
+    end
+  end
+
   image.begin_batch() -- new placements go out in one write
   for _, img in ipairs(ordered) do
     local cols, rows = M.size(win, img.indent, img.w, img.h)
     local lines = M.lines(M.placement(img.id, cols, rows), cols, rows, img.indent)
-    if current and current.start_row == img.row then
-      vim.list_extend(current.opts.virt_lines, lines)
+    local hide = img.hide
+    if not hide then
+      below(img.row, false, lines)
+    elseif hide.kind == "text" then
+      marks[#marks + 1] = {
+        conceal = true,
+        start_row = hide.start_row,
+        start_col = hide.start_col,
+        opts = { end_row = hide.end_row, end_col = hide.end_col, conceal = "" },
+      }
+      below(img.row, true, lines)
     else
-      current = { conceal = false, start_row = img.row, start_col = 0, opts = { virt_lines = lines } }
-      marks[#marks + 1] = current
+      local conceal_lines = { end_row = hide.end_row, end_col = hide.end_col, conceal_lines = "" }
+      if not at_end(buf, hide.end_row) then
+        marks[#marks + 1] = {
+          conceal = true,
+          start_row = hide.start_row,
+          start_col = hide.start_col,
+          opts = conceal_lines,
+          replace = lines,
+        }
+      elseif hide.start_row > 0 then
+        marks[#marks + 1] =
+          { conceal = true, start_row = hide.start_row, start_col = hide.start_col, opts = conceal_lines }
+        below(hide.start_row - 1, false, lines)
+      else
+        below(img.row, false, lines)
+      end
     end
   end
   image.flush_batch()

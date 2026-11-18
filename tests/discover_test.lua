@@ -1,4 +1,4 @@
--- discover: images in inline markdown and diagram fences in block markdown.
+-- discover: images in the inline text of the block tree, and diagram fences.
 -- Run: nvim --headless -u NONE --noplugin -l tests/discover_test.lua
 
 package.path = vim.fn.getcwd() .. "/?.lua;" .. package.path
@@ -27,9 +27,8 @@ local function find(lines, opts)
   parser:parse(true)
   local out = { buf = buf, images = {}, fences = {}, parser = parser }
   parser:for_each_tree(function(tree, language_tree)
-    if language_tree:lang() == "markdown_inline" then
+    if language_tree:lang() == "markdown" then
       vim.list_extend(out.images, discover.inline(buf, tree:root(), opts))
-    elseif language_tree:lang() == "markdown" then
       vim.list_extend(out.fences, discover.fences(buf, tree:root(), opts))
     end
   end)

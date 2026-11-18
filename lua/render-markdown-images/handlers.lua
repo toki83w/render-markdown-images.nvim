@@ -1,7 +1,11 @@
 --- Glue between render-markdown.nvim's custom handler API and this plugin.
 ---
---- Both handlers extend the builtin ones. `markdown_inline` finds images and `markdown` finds Mermaid
---- and PlantUML fences; both ask the store for them and draw the ready ones below their lines.
+--- One handler, for `markdown`, extending the builtin one. It finds the images and the Mermaid and PlantUML
+--- fences of the document, asks the store for them and draws the ready ones.
+---
+--- Images are not left to a `markdown_inline` handler. render-markdown hands such a handler the inline trees that
+--- `for_each_tree` gave it, and those can be stale (see `discover.inline`): now and then a paragraph's
+--- images were never seen. The block tree is a single tree, and the inline text of its nodes is parsed here.
 ---
 --- A handler runs inside render-markdown's parse. It must be quick and must not wait: everything
 --- slow happens in the store, which renders the buffer again when something is ready.
@@ -73,20 +77,54 @@ function M.resolve_local(src, dir)
 end
 
 -- ============================================================================
+-- Replace mode
+-- ============================================================================
+
+--- Whether a source can be hidden for its image.
+---
+--- Hiding relies on `conceal_lines` (Neovim 0.11) and on render-markdown drawing the `replace` of a mark
+--- (a feature added to it after its first releases). A render-markdown that ignores `replace` would
+--- conceal the source and draw nothing, so without it the image goes below the source instead.
+---@return boolean
+function M.can_replace()
+  if vim.fn.has "nvim-0.11" == 0 then return false end
+  return (pcall(require, "render-markdown.lib.replacements"))
+end
+
+--- The source of an image that is to be hidden.
+---
+--- An image that is alone on its line at the left margin takes the whole rows. One in the middle of text,
+--- or inside a list or a quote whose marker must stay, loses only the `![...](...)` itself.
+---@param buf integer
+---@param item render-markdown-images.ImageItem
+---@return render-markdown-images.Hide
+local function image_hide(buf, item)
+  if item.alone_on_line and item.indent == 0 then
+    return {
+      kind = "lines",
+      start_row = item.row,
+      start_col = 0,
+      end_row = item.end_row,
+      end_col = #(vim.api.nvim_buf_get_lines(buf, item.end_row, item.end_row + 1, false)[1] or ""),
+    }
+  end
+  return { kind = "text", start_row = item.row, start_col = item.col, end_row = item.end_row, end_col = item.end_col }
+end
+
+-- ============================================================================
 -- Collecting and drawing
 -- ============================================================================
 
 --- What is ready to draw, collected over the roots of one render.
 ---
---- It lives on render-markdown's request context, which is made afresh for every render, under `field`.
---- Without that context each root is drawn on its own.
+--- It lives on render-markdown's request context, which is made afresh for every render. Without that context
+--- each root is drawn on its own.
 ---@param context? table
----@param field string
 ---@return render-markdown-images.Ready[] collected, boolean shared whether later roots add to it
-local function collector(context, field)
+local function collector(context)
   if not context then return {}, false end
-  context[field] = context[field] or {}
-  return context[field], true
+  context.rmi_ready = context.rmi_ready or {}
+  return context.rmi_ready, true
 end
 
 --- The marks for what has been collected, once the last root has added to it.
@@ -100,37 +138,47 @@ local function draw(buf, context, ready, shared, last)
   if shared and not last then return {} end
   local win = render_window(context, buf)
   if not win then return {} end
-  return require("render-markdown-images.marks").below(win, ready)
+  return require("render-markdown-images.marks").build(win, ready)
 end
 
---- Whether the plugin should do anything for this buffer at all.
+--- Whether there is anything to do for this buffer. The terminal is not asked whether it shows images:
+--- having the plugin configured says it does.
 ---@param ctx { buf: integer, root: TSNode }
 ---@return render-markdown-images.Config? config
 local function active(ctx)
-  local config = require("render-markdown-images.config").get()
-  if config.enabled == false or not ctx.root or not vim.api.nvim_buf_is_valid(ctx.buf) then return nil end
-  if not require("render-markdown-images.image").supports_kitty() then return nil end
-  return config
+  if not ctx.root or not vim.api.nvim_buf_is_valid(ctx.buf) then return nil end
+  return require("render-markdown-images.config").get()
 end
 
 -- ============================================================================
--- markdown_inline: images
+-- Images
 -- ============================================================================
 
----@param ctx { buf: integer, root: TSNode, last: boolean }
----@return table[]
-function M.parse_inline(ctx)
-  if not active(ctx) then return {} end
-  -- Below mode only, for now: `images.mode = "replace"` is drawn like "below".
+--- Only the inline nodes render-markdown has in view: what is not shown is not asked for, so a long document
+--- does not download, render and transmit everything at once. Without a view, everything.
+---@param context? table
+---@return (fun(node: TSNode): boolean)?
+local function in_view(context)
+  local view = context and context.view
+  if type(view) ~= "table" or type(view.overlaps) ~= "function" then return nil end
+  return function(node)
+    local ok, overlaps = pcall(view.overlaps, view, node)
+    return not ok or overlaps
+  end
+end
+
+---@param ctx { buf: integer, root: TSNode }
+---@param config render-markdown-images.Config
+---@param context? table
+---@param ready render-markdown-images.Ready[]
+local function collect_images(ctx, config, context, ready)
   local image = require "render-markdown-images.image"
   local discover = require "render-markdown-images.discover"
   local store = require "render-markdown-images.store"
-
-  local context = request_context(ctx.buf)
-  local ready, shared = collector(context, "rmi_images")
   local dir = base_dir(ctx.buf)
+  local replace = config.images.mode == "replace" and M.can_replace()
 
-  for _, item in ipairs(discover.inline(ctx.buf, ctx.root)) do
+  for _, item in ipairs(discover.inline(ctx.buf, ctx.root, { filter = in_view(context) })) do
     -- Remote images and Obsidian vault names are not drawn yet.
     local path = not image.is_url(item.src) and M.resolve_local(item.src, dir) or nil
     if path then
@@ -144,14 +192,13 @@ function M.parse_inline(ctx)
           id = entry.id,
           w = entry.w,
           h = entry.h,
+          -- A table cell cannot give up its text without leaving the table with a hole in it: the
+          -- source stays and the image goes below the table, as in below mode.
+          hide = replace and not item.in_table and image_hide(ctx.buf, item) or nil,
         }
       end
     end
   end
-
-  -- Every root of the render has added its images by the time of the last one, so images that share
-  -- a row, in different table cells say, stack in one mark.
-  return draw(ctx.buf, context, ready, shared, ctx.last)
 end
 
 -- ============================================================================
@@ -177,16 +224,28 @@ local function closing_fence_hidden(buf, lang)
   return not (type(disable) == "table" and vim.tbl_contains(disable, lang))
 end
 
----@param ctx { buf: integer, root: TSNode, last: boolean }
----@return table[]
-function M.parse_fences(ctx)
-  local config = active(ctx)
-  if not config or not (config.diagrams.mermaid or config.diagrams.plantuml) then return {} end
+--- The rows of a diagram fence, from the opening fence to the closing one.
+---@param buf integer
+---@param item render-markdown-images.FenceItem
+---@return render-markdown-images.Hide
+local function fence_hide(buf, item)
+  return {
+    kind = "lines",
+    start_row = item.start_row,
+    start_col = 0,
+    end_row = item.end_row,
+    end_col = #(vim.api.nvim_buf_get_lines(buf, item.end_row, item.end_row + 1, false)[1] or ""),
+  }
+end
+
+---@param ctx { buf: integer, root: TSNode }
+---@param config render-markdown-images.Config
+---@param ready render-markdown-images.Ready[]
+local function collect_fences(ctx, config, ready)
+  if not (config.diagrams.mermaid or config.diagrams.plantuml) then return end
   local discover = require "render-markdown-images.discover"
   local store = require "render-markdown-images.store"
-
-  local context = request_context(ctx.buf)
-  local ready, shared = collector(context, "rmi_fences")
+  local replace = config.diagrams.mode == "replace" and M.can_replace()
 
   for _, item in ipairs(discover.fences(ctx.buf, ctx.root)) do
     if config.diagrams[item.kind] then
@@ -202,19 +261,35 @@ function M.parse_fences(ctx)
           id = entry.id,
           w = entry.w,
           h = entry.h,
+          hide = replace and fence_hide(ctx.buf, item) or nil,
         }
       end
     end
   end
+end
 
+-- ============================================================================
+-- The handler
+-- ============================================================================
+
+--- What render-markdown calls for the `markdown` tree of a render.
+---@param ctx { buf: integer, root: TSNode, last: boolean }
+---@return table[]
+function M.parse(ctx)
+  local config = active(ctx)
+  if not config then return {} end
+  local context = request_context(ctx.buf)
+  local ready, shared = collector(context)
+  collect_images(ctx, config, context, ready)
+  collect_fences(ctx, config, ready)
+  -- Images and diagrams are drawn together, so that those that share a row stack in one mark.
   return draw(ctx.buf, context, ready, shared, ctx.last)
 end
 
 ---@return table<string, render-markdown-images.Handler>
 function M.new()
   return {
-    markdown = { extends = true, parse = M.parse_fences },
-    markdown_inline = { extends = true, parse = M.parse_inline },
+    markdown = { extends = true, parse = M.parse },
   }
 end
 

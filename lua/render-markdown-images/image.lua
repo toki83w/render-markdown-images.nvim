@@ -15,8 +15,8 @@
 --- The cells are ordinary text in Neovim's grid, so scrolling, cropping and
 --- repaints are Neovim's business and nothing is re-placed after them.
 ---
---- Whether the terminal speaks the protocol is asked, not guessed:
---- see `supports_kitty()`.
+--- Nothing in here checks the terminal: having the plugin configured says it speaks the
+--- protocol. `probe()` can ask, for `:checkhealth`.
 ---
 --- Terminal output goes through `vim.api.nvim_ui_send` (Neovim >= 0.12), which
 --- emits a "ui_send" event to the attached TUI. This avoids the /dev/tty open
@@ -35,21 +35,12 @@ local IS_WINDOWS = ffi.os == "Windows"
 -- Configuration
 -- ============================================================================
 
---- The options this module reads, `enabled` and `plantuml_server`, live in
---- `render-markdown-images.config`; it is read at call time, never copied.
+--- The option this module reads, `plantuml_server`, lives in `render-markdown-images.config`;
+--- it is read at call time, never copied.
 
 ---@return render-markdown-images.Config
 local function config()
   return require("render-markdown-images.config").get()
-end
-
---- Apply the configuration that `config.setup()` has just stored.
----
---- What was decided under the old settings is no longer the answer, so the
---- cached "does the terminal speak the protocol" decision is dropped. What the
---- terminal said is kept: it does not depend on these settings.
-function M.setup()
-  M._forget_support()
 end
 
 -- ============================================================================
@@ -679,8 +670,6 @@ end
 -- Kitty Graphics Protocol support detection
 -- ============================================================================
 
-local _kitty_supported = nil
-
 -- Mutable module state hoisted here so M.reset_cache() (defined below, before the
 -- sections that use these) resolves to the same upvalues. Declaring them only in
 -- the later sections left reset_cache() writing to accidental globals instead.
@@ -776,11 +765,14 @@ end
 --- it has answered or `_probe_timeout_ms` has passed. The answer is kept for
 --- the session, except "not_asked".
 ---
+--- Rendering never calls this: it is for `:checkhealth`. Through tmux the answer may
+--- not arrive although the terminal would draw the images.
+---
 --- Inside tmux the query is wrapped for passthrough so that it reaches the
 --- outer terminal, and DA1 is not asked: tmux answers that itself, before the
 --- outer terminal could, so it says nothing about the terminal.
 ---@return render-markdown-images.ProbeResult
-local function probe_protocol()
+function M.probe()
   if _probe_result ~= "not_asked" then return _probe_result end
   -- A scheduled callback run by the wait below may ask as well: share the
   -- answer. It waits for the answer, not for the end of the question, which
@@ -826,32 +818,6 @@ local function probe_protocol()
   return _probe_result
 end
 
---- Whether images are drawn: a terminal that speaks the Kitty graphics protocol
---- (asked, unless `enabled = true` says to take it for granted), and 24-bit
---- colour, because the image id and placement id travel in colours.
----@return boolean
-function M.supports_kitty()
-  if _kitty_supported ~= nil then return _kitty_supported end
-  -- Windows lacks the POSIX TTY plumbing (isatty/ttyname/ioctl) this module
-  -- relies on, so disable image rendering entirely on Windows.
-  if IS_WINDOWS or config().enabled == false then
-    _kitty_supported = false
-    return false
-  end
-  if config().enabled == "auto" then
-    local result = probe_protocol()
-    if result == "not_asked" then return false end
-    if result ~= "ok" then
-      _kitty_supported = false
-      return false
-    end
-  end
-  -- Not stored: setting 'termguicolors' later turns images on.
-  if not vim.o.termguicolors then return false end
-  _kitty_supported = true
-  return true
-end
-
 --- What the terminal said to the graphics query, for `:checkhealth`.
 ---@return render-markdown-images.ProbeResult
 function M.probe_result()
@@ -864,14 +830,7 @@ function M.in_tmux()
   return in_tmux()
 end
 
---- Forget whether images are on, so that the next `supports_kitty()` decides
---- again. What the terminal answered is kept.
-function M._forget_support()
-  _kitty_supported = nil
-end
-
 function M.reset_cache()
-  _kitty_supported = nil
   _in_tmux = nil
   _probe_result = "not_asked"
   _probing = false
@@ -885,12 +844,6 @@ function M.reset_cache()
   _mmdc_cmd = nil
   _mmdc_checked = false
   tty_mod.reset()
-end
-
---- Override kitty support detection for testing.
----@param val boolean?
-function M._set_kitty_supported(val)
-  _kitty_supported = val
 end
 
 --- Override tmux detection for testing. `nil` goes back to reading `$TMUX`.
@@ -1398,8 +1351,6 @@ end
 ---@param path string absolute path to image file
 ---@return integer? image_id
 function M.transmit_image(path)
-  if not M.supports_kitty() then return nil end
-
   local png_path, is_temp = M.ensure_png(path)
   if not png_path then return nil end
 
@@ -1416,10 +1367,6 @@ end
 ---@param path string absolute path to image file
 ---@param callback fun(image_id: integer?, tx_w: integer?, tx_h: integer?)
 function M.transmit_image_async(path, callback)
-  if not M.supports_kitty() then
-    callback(nil)
-    return
-  end
   M.ensure_png_async(path, function(png_path, is_temp)
     if not png_path then
       callback(nil)
@@ -1455,7 +1402,6 @@ local MAX_PLACEHOLDER_CELLS = 297
 ---@param cols integer
 ---@param rows integer
 function M.create_virtual_placement(image_id, placement_id, cols, rows)
-  if not M.supports_kitty() then return end
   cols = math.max(1, math.min(cols, MAX_PLACEHOLDER_CELLS))
   rows = math.max(1, math.min(rows, MAX_PLACEHOLDER_CELLS))
   term_write(string.format("\x1b_Ga=p,U=1,i=%d,p=%d,c=%d,r=%d,q=2\x1b\\", image_id, placement_id, cols, rows))
@@ -1465,13 +1411,11 @@ end
 ---@param image_id integer
 ---@param placement_id integer
 function M.delete_virtual_placement(image_id, placement_id)
-  if not M.supports_kitty() then return end
   term_write(string.format("\x1b_Ga=d,d=i,i=%d,p=%d,q=2\x1b\\", image_id, placement_id))
 end
 
 --- Delete all images and placements from terminal memory.
 function M.delete_all()
-  if not M.supports_kitty() then return end
   term_write "\x1b_Ga=d,d=A,q=2\x1b\\"
 end
 
@@ -1479,14 +1423,13 @@ end
 --- included, and its data (`d=I`; lowercase would leave the data behind).
 ---@param image_id integer
 function M.delete_image(image_id)
-  if not M.supports_kitty() then return end
   term_write(string.format("\x1b_Ga=d,d=I,i=%d\x1b\\", image_id))
 end
 
 --- Delete multiple images
 ---@param image_ids integer[]
 function M.delete_images(image_ids)
-  if not M.supports_kitty() or #image_ids == 0 then return end
+  if #image_ids == 0 then return end
   local parts = {}
   for _, id in ipairs(image_ids) do
     table.insert(parts, string.format("\x1b_Ga=d,d=I,i=%d\x1b\\", id))
@@ -1500,7 +1443,6 @@ end
 function M.clear_all()
   if _session_cleared then return end
   _session_cleared = true
-  if not M.supports_kitty() then return end
   -- d=A: delete all stored image data and placements
   term_write "\x1b_Ga=d,d=A\x1b\\"
   -- Reset the ID counter to ensure clean state

@@ -12,7 +12,6 @@ local cfg = require "render-markdown-images.config"
 --- Configure the plugin the way `require("render-markdown-images").setup` does.
 local function set_config(opts)
   cfg.setup(opts)
-  image.setup()
 end
 
 local pass_count = 0

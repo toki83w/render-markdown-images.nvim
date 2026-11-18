@@ -35,7 +35,6 @@ local function reset()
   marks.reset()
   log.reset()
   rmi.setup()
-  image._set_kitty_supported(true)
   image._set_in_tmux(false)
   image._test_cell_size = { cell_w = 10, cell_h = 20 }
   h.stub(store.limits, "debounce", 10)
@@ -74,7 +73,6 @@ local function finish_test()
   log.reset()
   rmi.setup()
   image._test_cell_size = nil
-  image._set_kitty_supported(nil)
   image.reset_cache()
 end
 
@@ -83,7 +81,6 @@ end
 ---@param opts? table
 local function configure(opts)
   rmi.setup(opts)
-  image._set_kitty_supported(true)
 end
 
 --- A markdown buffer shown in the current window.
@@ -100,21 +97,12 @@ local function open(lines)
   return buf
 end
 
---- Run a handler over the trees of its language, as render-markdown does.
+--- Run the handler over the markdown tree, as render-markdown does.
 ---@param buf integer
----@param lang? "markdown"|"markdown_inline"
 ---@return render.md.Mark[]
-local function run(buf, lang)
-  lang = lang or "markdown"
-  local roots = {}
-  vim.treesitter.get_parser(buf, "markdown"):for_each_tree(function(tree, language_tree)
-    if language_tree:lang() == lang then roots[#roots + 1] = tree:root() end
-  end)
-  local out = {}
-  for i, root in ipairs(roots) do
-    vim.list_extend(out, handlers.new()[lang].parse { buf = buf, root = root, last = i == #roots })
-  end
-  return out
+local function run(buf)
+  local root = vim.treesitter.get_parser(buf, "markdown"):parse(true)[1]:root()
+  return handlers.new().markdown.parse { buf = buf, root = root, last = true }
 end
 
 local function run_until_marks(buf, n)
@@ -248,7 +236,7 @@ h.test("images and diagrams in one document are marks of their own", function()
   local buf = open { "![x](small.png)", "", "```mermaid", "graph", "```" }
   local both = {}
   h.wait_for(function()
-    both = vim.list_extend(run(buf, "markdown_inline"), run(buf, "markdown"))
+    both = run(buf)
     return #both == 2
   end, 3000)
   h.assert_eq(
@@ -381,19 +369,6 @@ h.test("the switch is read on every render", function()
   finish_test()
 end)
 
-h.test("enabled = false and a terminal without Kitty graphics: nothing", function()
-  reset()
-  configure { enabled = false }
-  local buf = open(MERMAID)
-  h.assert_eq(run(buf), {}, "enabled = false")
-  configure()
-  image._set_kitty_supported(false)
-  h.assert_eq(run(buf), {}, "no Kitty graphics")
-  settle()
-  h.assert_eq(store.stats().entries, 0, "no entries in either case")
-  finish_test()
-end)
-
 h.test("an invalid root is no marks", function()
   reset()
   h.assert_eq(handlers.new().markdown.parse { buf = 0, root = nil, last = true }, {}, "no root")
@@ -500,6 +475,126 @@ h.test("a failed diagram does not hold back the others", function()
   settle()
   h.assert_eq(#result, 1, "the good one is drawn")
   h.assert_eq(result[1].start_row, 5, "under its own source")
+  finish_test()
+end)
+
+-- ============================================================================
+-- diagrams.mode = "replace"
+-- ============================================================================
+
+--- `diagrams.mode = "replace"`, with render-markdown able to draw a mark's `replace`.
+local function replace_mode()
+  configure { diagrams = { mode = "replace" } }
+  h.stub(package.loaded, "render-markdown.lib.replacements", {})
+end
+
+h.test("replace mode: the whole fence is concealed and the diagram is the mark's `replace`", function()
+  reset()
+  replace_mode()
+  local buf = open { "text", "", "```mermaid", "graph TD", "  A --> B", "```", "", "after" }
+  h.assert_eq(run(buf), {}, "pending: the source stays")
+  local result = run_until_marks(buf)
+  h.assert_eq(#result, 1, "one mark")
+  h.assert_eq({
+    result[1].conceal,
+    result[1].start_row,
+    result[1].start_col,
+    result[1].opts.end_row,
+    result[1].opts.end_col,
+    result[1].opts.conceal_lines,
+  }, { true, 2, 0, 5, 3, "" }, "from the opening fence to the end of the closing fence, hidden by anti-conceal")
+  h.assert_eq(#result[1].replace, 10, "the diagram: 10 rows")
+  h.assert_eq(result[1].opts.virt_lines, nil, "no virtual lines of its own: render-markdown draws `replace`")
+  finish_test()
+end)
+
+h.test("replace mode: it does not matter what render-markdown does with the fence lines", function()
+  for _, border in ipairs { "hide", "none" } do
+    reset()
+    replace_mode()
+    fake_code_config { enabled = true, border = border, disable = {} }
+    local buf = open { "a", "", "```mermaid", "graph", "```", "", "b" }
+    local result = run_until_marks(buf)
+    h.assert_eq({ result[1].start_row, result[1].opts.end_row }, { 2, 4 }, "rows 2 to 4, border = " .. border)
+    finish_test()
+  end
+end)
+
+h.test("replace mode: a fence in a list item is indented", function()
+  reset()
+  replace_mode()
+  local buf = open { "- item", "  ```mermaid", "  graph", "  ```", "", "after" }
+  local result = run_until_marks(buf)
+  h.assert_eq(
+    { result[1].start_row, result[1].opts.end_row, result[1].opts.end_col },
+    { 1, 3, 5 },
+    "the three fence rows"
+  )
+  h.assert_eq(result[1].replace[1][1], { "  " }, "image indented by the item's content column")
+  finish_test()
+end)
+
+h.test("replace mode: a fence that ends the buffer is concealed here, the diagram goes under the row before", function()
+  reset()
+  replace_mode()
+  local buf = open { "text", "", "```mermaid", "graph", "```" }
+  local result = run_until_marks(buf, 2)
+  h.assert_eq(#result, 2, "two marks")
+  local hiding = vim.tbl_filter(function(m)
+    return m.opts.conceal_lines
+  end, result)[1]
+  local drawing = vim.tbl_filter(function(m)
+    return m.opts.virt_lines
+  end, result)[1]
+  h.assert_eq(hiding.replace, nil, "no `replace`: there is no row below to draw above")
+  h.assert_eq({ hiding.start_row, hiding.opts.end_row }, { 2, 4 }, "the fence rows concealed")
+  h.assert_eq({ drawing.start_row, drawing.conceal }, { 1, false }, "the diagram below row 1")
+  finish_test()
+end)
+
+h.test("replace mode: followed by a blank row, not the end of the buffer", function()
+  reset()
+  replace_mode()
+  local buf = open { "text", "", "```mermaid", "graph", "```", "" }
+  local result = run_until_marks(buf)
+  h.assert_eq(#result, 1, "one mark")
+  h.assert_eq(result[1].replace ~= nil, true, "with `replace`")
+  finish_test()
+end)
+
+h.test("replace mode without render-markdown's `replace`: below the source, which stays", function()
+  reset()
+  configure { diagrams = { mode = "replace" } }
+  local buf = open { "```mermaid", "graph", "```", "", "after" }
+  local result = run_until_marks(buf)
+  h.assert_eq(result[1].conceal, false, "never hidden")
+  h.assert_eq(result[1].opts.conceal_lines, nil, "nothing concealed")
+  finish_test()
+end)
+
+h.test("replace mode: Mermaid and PlantUML fences, each replaced", function()
+  reset()
+  replace_mode()
+  local buf = open { "```mermaid", "graph", "```", "", "```plantuml", "@startuml", "```", "", "end" }
+  local result = run_until_marks(buf, 2)
+  h.assert_eq(
+    vim.tbl_map(function(m)
+      return { m.start_row, m.opts.end_row }
+    end, result),
+    { { 0, 2 }, { 4, 6 } },
+    "rows of each fence"
+  )
+  finish_test()
+end)
+
+h.test("replace mode: a fence whose diagram fails stays as it is", function()
+  reset()
+  replace_mode()
+  renderers.mmdc = false
+  local buf = open { "```mermaid", "graph", "```", "", "after" }
+  run(buf)
+  settle()
+  h.assert_eq(run(buf), {}, "no marks, so no concealing")
   finish_test()
 end)
 

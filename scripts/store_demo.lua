@@ -9,7 +9,7 @@
 local store = require "render-markdown-images.store"
 local image = require "render-markdown-images.image"
 
-require("render-markdown-images").setup { enabled = true } -- no probe: this demo has no terminal to ask
+require("render-markdown-images").setup {} -- nothing asks the terminal; this demo has none
 vim.o.termguicolors = true
 
 local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")

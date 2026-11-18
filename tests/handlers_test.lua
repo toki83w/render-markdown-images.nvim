@@ -5,11 +5,11 @@ package.path = vim.fn.getcwd() .. "/?.lua;" .. package.path
 local h = require "tests.harness"
 local rmi = require "render-markdown-images"
 
-h.test("handlers() covers markdown and markdown_inline only", function()
+h.test("handlers() covers markdown only: images are found in its inline text, not through injected trees", function()
   local handlers = rmi.handlers()
   local langs = vim.tbl_keys(handlers)
   table.sort(langs)
-  h.assert_eq(langs, { "markdown", "markdown_inline" }, "languages")
+  h.assert_eq(langs, { "markdown" }, "languages")
 end)
 
 h.test("each handler extends the builtin one and parses to no marks", function()

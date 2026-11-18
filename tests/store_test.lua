@@ -15,17 +15,14 @@ local fixture = h.root .. "/tests/fixtures/test_4x4.png" -- 4x4 pixels
 local function reset()
   h.unstub()
   store.reset()
-  image._set_kitty_supported(nil)
   image.reset_cache()
   h.stub(store.limits, "debounce", 20)
   h.stub(store.limits, "retry_delay", 0)
-  image._set_kitty_supported(true)
 end
 
 local function finish_test()
   h.unstub()
   store.reset()
-  image._set_kitty_supported(nil)
   image.reset_cache()
 end
 
@@ -827,18 +824,6 @@ h.test("an unknown kind fails", function()
   finish_test()
 end)
 
-h.test("a terminal without Kitty graphics fails everything at once, before any work", function()
-  reset()
-  image._set_kitty_supported(false)
-  local calls = stub_image { download_async = fixture }
-  local produce = stub_produce()
-  local status, entry = run_default_produce(fixture)
-  h.assert_eq({ status, entry.attempts }, { "failed", 1 }, "failed, once")
-  h.assert_eq(entry.err, "the terminal does not support Kitty graphics", "says why")
-  h.assert_eq(#produce.calls + #calls.download_async, 0, "nothing was produced")
-  finish_test()
-end)
-
 h.test("default transmit: through the image module, in the terminal's own words", function()
   reset()
   local sent = {}
@@ -996,7 +981,7 @@ h.test("log_id = false keeps a refusal out of the log", function()
   finish_test()
 end)
 
-h.test("refusals are not failures: badges, GIFs, and a terminal without graphics are not logged", function()
+h.test("refusals are not failures: badges and GIFs are not logged", function()
   reset()
   log.reset()
   stub_transmit()
@@ -1004,8 +989,6 @@ h.test("refusals are not failures: badges, GIFs, and a terminal without graphics
   run_default_produce "https://img.shields.io/badge/a-b-green.png"
   run_default_produce "https://example.test/anim.gif"
   run_default_produce "/local/clip.mp4"
-  image._set_kitty_supported(false)
-  run_default_produce(fixture)
   h.assert_eq(log.recent(), {}, "none of them")
   finish_test()
 end)
@@ -1035,6 +1018,33 @@ h.test("a ready entry writes nothing", function()
   store.get(fixture)
   wait_status(fixture, "ready")
   h.assert_eq(log.recent(), {}, "nothing")
+  finish_test()
+end)
+
+h.test("snapshot lists every entry with its state", function()
+  reset()
+  stub_produce(function(call)
+    if call.key == "/bad.png" then
+      call.done(nil, "no good", true, false)
+    else
+      call.done(fixture)
+    end
+  end)
+  stub_transmit()
+  stub_render()
+  h.assert_eq(store.snapshot(), {}, "empty at first")
+  store.get "/bad.png"
+  store.get(fixture)
+  wait_status("/bad.png", "failed")
+  wait_status(fixture, "ready")
+  local snap = store.snapshot()
+  h.assert_eq(
+    vim.tbl_map(function(e)
+      return { e.key, e.kind, e.status, e.err, e.id }
+    end, snap),
+    { { "/bad.png", "file", "failed", "no good", nil }, { fixture, "file", "ready", nil, 101 } },
+    "sorted by key, with what went wrong"
+  )
   finish_test()
 end)
 

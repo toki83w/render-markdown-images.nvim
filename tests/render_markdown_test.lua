@@ -90,7 +90,9 @@ local function render(opts)
   return out
 end
 
-h.test("handlers do not change render-markdown's extmarks", function()
+h.test("with nothing to draw the handlers do not change render-markdown's extmarks", function()
+  -- The document names images that do not exist, and the diagram fences are switched off.
+  rmi.setup { diagrams = { mermaid = false, plantuml = false } }
   local baseline = render {}
   h.assert_eq(#baseline > 20, true, "baseline produced extmarks (got " .. #baseline .. ")")
 
@@ -106,14 +108,13 @@ h.test("handlers do not change render-markdown's extmarks", function()
 
   local with_handlers = render { custom_handlers = handlers }
   h.assert_eq((calls.markdown or 0) > 0, true, "markdown handler was invoked")
-  h.assert_eq((calls.markdown_inline or 0) > 0, true, "markdown_inline handler was invoked")
   h.assert_eq(with_handlers, baseline, "identical extmarks with and without handlers")
 end)
 
-h.test("registered after setup(): same marks as well", function()
-  rmi.setup { images = { mode = "replace" }, diagrams = { mode = "replace" } }
+h.test("replace mode with nothing to draw is as inert", function()
+  rmi.setup { images = { mode = "replace" }, diagrams = { mode = "replace", mermaid = false, plantuml = false } }
   local baseline = render {}
-  h.assert_eq(render { custom_handlers = rmi.handlers() }, baseline, "mode = replace is inert in task 1")
+  h.assert_eq(render { custom_handlers = rmi.handlers() }, baseline, "mode = replace changes nothing by itself")
 end)
 
 h.finish "render_markdown_test"

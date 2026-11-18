@@ -7,7 +7,6 @@
 ---@field plantuml boolean
 
 ---@class render-markdown-images.Config
----@field enabled "auto"|boolean
 ---@field images render-markdown-images.ImagesConfig
 ---@field diagrams render-markdown-images.DiagramsConfig
 ---@field plantuml_server string?
@@ -22,8 +21,9 @@ M.MODES = { "below", "replace" }
 ---@return render-markdown-images.Config
 function M.defaults()
   return {
-    -- "auto" probes the terminal for Kitty graphics support; true/false skip the probe.
-    enabled = "auto",
+    -- "below": the image is drawn under its source, which stays visible.
+    -- "replace": the source is hidden and the image takes its place; the source comes back while the
+    -- cursor is on it (render-markdown's anti-conceal).
     images = { mode = "below" },
     diagrams = { mode = "below", mermaid = true, plantuml = true },
     -- Unset on purpose. A PlantUML fence is rendered by a local `plantuml` or
@@ -73,11 +73,7 @@ end
 --- Validate a (merged) configuration. Raises an error describing the first problem.
 ---@param cfg render-markdown-images.Config
 function M.validate(cfg)
-  check_keys("", cfg, { enabled = true, images = true, diagrams = true, plantuml_server = true })
-
-  if cfg.enabled ~= "auto" and type(cfg.enabled) ~= "boolean" then
-    fail("enabled", '"auto", true or false', cfg.enabled)
-  end
+  check_keys("", cfg, { images = true, diagrams = true, plantuml_server = true })
 
   check_keys("images", cfg.images, { mode = true })
   check_mode("images.mode", cfg.images.mode)

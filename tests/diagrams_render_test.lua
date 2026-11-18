@@ -54,7 +54,6 @@ local function setup(opts)
   rmi.setup(opts.config)
   h.stub(vim.api, "nvim_ui_send", function() end)
   image.reset_cache()
-  image._set_kitty_supported(true)
   image._set_in_tmux(false)
   image._test_cell_size = { cell_w = 10, cell_h = 20 }
   h.stub(image, "has_mmdc", function()
@@ -86,7 +85,6 @@ local function finish_test()
   store.reset()
   marks.reset()
   image._test_cell_size = nil
-  image._set_kitty_supported(nil)
   image.reset_cache()
   rmi.setup()
 end

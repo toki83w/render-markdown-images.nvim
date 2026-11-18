@@ -64,7 +64,6 @@ local function setup_capture()
   -- Inside tmux every graphics sequence is wrapped for passthrough, which these
   -- assertions are not about.
   image._set_in_tmux(false)
-  image._set_kitty_supported(true)
   image._reset_image_id()
 end
 
@@ -73,7 +72,6 @@ local function teardown()
     vim.api.nvim_ui_send = _orig_ui_send
     _orig_ui_send = nil
   end
-  image._set_kitty_supported(nil)
   image.reset_cache()
 end
 

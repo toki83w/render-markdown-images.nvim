@@ -14,38 +14,32 @@ end
 
 h.test("setup() does not load the image module", function()
   package.loaded[IMAGE] = nil
-  require("render-markdown-images").setup { enabled = false }
+  require("render-markdown-images").setup { images = { mode = "replace" } }
   h.assert_eq(package.loaded[IMAGE], nil, "still not loaded")
   reset()
 end)
 
-h.test("setup() after the image module is loaded makes it decide again", function()
-  local saved = vim.o.termguicolors
-  vim.o.termguicolors = true
-  local rmi = require "render-markdown-images"
+h.test("nothing asks the terminal: images are drawn whatever it answers", function()
   local image = require(IMAGE)
-  rmi.setup { enabled = true }
-  h.assert_eq(image.supports_kitty(), true, "enabled = true is on without asking the terminal")
-  rmi.setup { enabled = false }
-  h.assert_eq(image.supports_kitty(), false, "off as soon as setup says so")
-  rmi.setup { enabled = true }
-  h.assert_eq(image.supports_kitty(), true, "and on again")
-  h.assert_eq(image.probe_result(), "not_asked", "never asking the terminal")
-  vim.o.termguicolors = saved
-  reset()
-end)
-
-h.test("a rejected setup() leaves the image module's decision alone", function()
-  local saved = vim.o.termguicolors
-  vim.o.termguicolors = true
   local rmi = require "render-markdown-images"
-  local image = require(IMAGE)
-  rmi.setup { enabled = true }
-  h.assert_eq(image.supports_kitty(), true, "on")
-  h.assert_error(function()
-    rmi.setup { enabled = "maybe" }
-  end, "`enabled`", "refused")
-  h.assert_eq(image.supports_kitty(), true, "still on")
+  local sent = {}
+  h.stub(vim.api, "nvim_ui_send", function(data)
+    sent[#sent + 1] = data
+  end)
+  local saved = vim.o.termguicolors
+  vim.o.termguicolors = false -- not even 24-bit colour is checked
+  image._set_in_tmux(false)
+  image.reset_cache()
+  rmi.setup()
+  local id = image.transmit_image(h.root .. "/tests/fixtures/test_4x4.png")
+  image.create_virtual_placement(id, 1, 2, 1)
+  image.delete_image(id)
+  local out = table.concat(sent)
+  h.assert_eq(out:find("a=t", 1, true) ~= nil, true, "transmitted")
+  h.assert_eq(out:find("a=p", 1, true) ~= nil, true, "placed")
+  h.assert_eq(out:find("a=d", 1, true) ~= nil, true, "deleted")
+  h.assert_eq(image.probe_result(), "not_asked", "and the terminal was not asked")
+  h.assert_eq(out:find("a=q", 1, true), nil, "no query was sent")
   vim.o.termguicolors = saved
   reset()
 end)

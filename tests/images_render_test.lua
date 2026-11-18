@@ -59,7 +59,6 @@ local function setup(opts)
     sent[#sent + 1] = data
   end)
   image.reset_cache()
-  image._set_kitty_supported(true)
   image._set_in_tmux(false)
   image._reset_image_id()
   image._test_cell_size = { cell_w = 10, cell_h = 20 }
@@ -77,7 +76,6 @@ local function finish_test()
   store.reset()
   marks.reset()
   image._test_cell_size = nil
-  image._set_kitty_supported(nil)
   image.reset_cache()
   rmi.setup()
 end
@@ -275,26 +273,6 @@ h.test("a missing file draws nothing and the buffer is not re-rendered for it", 
   sleep(200)
   h.assert_eq(image_marks(buf), {}, "nothing")
   h.assert_eq(store.stats().entries, 0, "and nothing asked for")
-  finish_test()
-end)
-
-h.test("a terminal without Kitty graphics: render-markdown works as before", function()
-  setup()
-  image._set_kitty_supported(false)
-  local buf = open { "# Title", "", "![wide](wide.png)" }
-  sleep(200)
-  h.assert_eq(image_marks(buf), {}, "no image")
-  h.assert_eq(#sent, 0, "nothing sent")
-  h.assert_eq(#vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, {}) > 0, true, "but render-markdown drew its own")
-  finish_test()
-end)
-
-h.test("enabled = false switches the handler off", function()
-  setup { config = { enabled = false } }
-  local buf = open { "![wide](wide.png)" }
-  sleep(200)
-  h.assert_eq(image_marks(buf), {}, "no image")
-  h.assert_eq(store.stats().entries, 0, "no work")
   finish_test()
 end)
 

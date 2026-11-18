@@ -19,7 +19,6 @@ end)()
 
 local function set_config(opts)
   cfg.setup(opts)
-  image.setup()
 end
 
 --- Pretend exactly the executables in `present` exist.
