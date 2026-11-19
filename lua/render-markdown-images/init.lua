@@ -34,4 +34,28 @@ function M.handlers()
   return require("render-markdown-images.handlers").new()
 end
 
+--- Whether images are shown. They are, until `disable()` or `toggle()`; this is not an option and is not saved.
+---@return boolean
+function M.is_enabled()
+  return require("render-markdown-images.lifecycle").is_enabled()
+end
+
+--- Show images again in every buffer. What was fetched and converted is still there, so it is quick.
+function M.enable()
+  require("render-markdown-images.lifecycle").set_enabled(true)
+end
+
+--- Hide the images of every buffer, and look for none until `enable()`: the sources are shown as they are.
+function M.disable()
+  require("render-markdown-images.lifecycle").set_enabled(false)
+end
+
+--- Switch between `enable()` and `disable()`.
+---@return boolean enabled whether images are shown now
+function M.toggle()
+  local on = not M.is_enabled()
+  require("render-markdown-images.lifecycle").set_enabled(on)
+  return on
+end
+
 return M

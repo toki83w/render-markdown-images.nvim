@@ -26,6 +26,10 @@ local PRUNE_DELAY = 200
 
 ---@type table<integer, true> buffers that have marks of ours
 local drawn = {}
+---@type table<integer, true> buffers render-markdown has run our handler for, drawn on or not
+local attached = {}
+---@type boolean whether images are shown: switched at run time, never saved
+local enabled = true
 ---@type string? the Mermaid theme the diagrams were made under
 local theme
 local installed = false
@@ -47,6 +51,35 @@ function M.buffers()
   local bufs = vim.tbl_keys(drawn)
   table.sort(bufs)
   return bufs
+end
+
+--- Note that render-markdown runs our handler for a buffer, so that it can be told to render again when images
+--- are switched on or off, whether it has marks of ours at that moment or not.
+---@param buf integer
+function M.attach(buf)
+  attached[buf] = true
+end
+
+---@return boolean
+function M.is_enabled()
+  return enabled
+end
+
+--- Show or hide the images of every buffer, at once and until it is switched again. What was drawn is
+--- taken away by the render that follows, and what was fetched and converted stays in the store, so switching
+--- back on is quick.
+---@param on boolean
+---@return boolean changed
+function M.set_enabled(on)
+  if enabled == on then return false end
+  enabled = on
+  local store = require "render-markdown-images.store"
+  local bufs = vim.tbl_keys(attached)
+  table.sort(bufs)
+  for _, buf in ipairs(bufs) do
+    store.request_render(buf)
+  end
+  return true
 end
 
 --- Render buffers again, soon. Those with nothing of ours drawn are left alone.
@@ -103,6 +136,7 @@ end
 ---@param buf integer
 local function forget(buf)
   drawn[buf] = nil
+  attached[buf] = nil
   require("render-markdown-images.store").forget_buf(buf)
   require("render-markdown-images.marks").forget_buf(buf)
   M.schedule_prune()
@@ -182,6 +216,8 @@ end
 function M.reset()
   installed = false
   drawn = {}
+  attached = {}
+  enabled = true
   theme = nil
   if prune_timer and not prune_timer:is_closing() then
     prune_timer:stop()

@@ -379,6 +379,12 @@ local function check_files(h)
   if cfg.plantuml_server then
     h.info("PlantUML server: " .. cfg.plantuml_server .. " (diagram source is sent there when no local renderer works)")
   end
+  if not require("render-markdown-images.lifecycle").is_enabled() then
+    h.warn(
+      "images are switched off at run time: none is looked for or drawn",
+      "Run  :RenderMarkdownImages enable  (or toggle)  to show them again"
+    )
+  end
   h.info("cache: " .. vim.fn.stdpath "cache" .. "/render-markdown-images")
 
   local log = require "render-markdown-images.log"

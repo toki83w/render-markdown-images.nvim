@@ -29,7 +29,7 @@ images are made of ordinary text cells, so scrolling, wrapping, splits and tmux 
 - Optional tools, each for one kind of source:
 
   | For                           | Tool                                                             |
-  |-------------------------------|------------------------------------------------------------------|
+  | ----------------------------- | ---------------------------------------------------------------- |
   | remote images                 | `curl`                                                           |
   | JPEG, WebP, BMP, TIFF and SVG | `magick` (ImageMagick 7)                                         |
   | Mermaid                       | `mmdr`, `mmdc` (mermaid-cli), or `npx`                           |
@@ -39,7 +39,8 @@ images are made of ordinary text cells, so scrolling, wrapping, splits and tmux 
 
 ## Installation
 
-The plugin has no commands and nothing to enable: it is a set of handlers, registered with render-markdown.nvim.
+The plugin has nothing to enable: it is a set of handlers, registered with render-markdown.nvim. (Its one command,
+`:RenderMarkdownImages`, only switches the images off and on; see [Commands](#commands).)
 
 lazy.nvim:
 
@@ -56,7 +57,8 @@ lazy.nvim:
 ```
 
 `require("render-markdown-images").setup({ ... })` is only needed to change [options](#options); `handlers()` works
-without it. To turn the plugin off, leave `custom_handlers` out.
+without it. To turn the plugin off for good, leave `custom_handlers` out; to switch images off and on while Neovim
+runs, see [Commands](#commands).
 
 If you already have custom handlers, merge: `handlers()` returns a table with one entry, `markdown`. It has
 `extends = true`, so render-markdown.nvim's own markdown rendering goes on as before.
@@ -78,7 +80,7 @@ require("render-markdown-images").setup({
 Unknown options are an error, so a typo does not go unnoticed. `setup()` starts from the defaults every time.
 
 | Option              | Default   |                                                              |
-|---------------------|-----------|--------------------------------------------------------------|
+| ------------------- | --------- | ------------------------------------------------------------ |
 | `images.mode`       | `"below"` | what to do with the source of an image, see [Modes](#modes)  |
 | `diagrams.mode`     | `"below"` | the same for Mermaid and PlantUML fences                     |
 | `diagrams.mermaid`  | `true`    | `false`: no Mermaid work at all                              |
@@ -106,7 +108,7 @@ concealed and the picture goes under the line before it; that one stays while yo
 ## What is drawn
 
 | Source                                                                                    |                                                                                   |
-|-------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------|
+| ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | `![alt](path/to/pic.png)`, `![alt](<a path with spaces.png>)`, `%20` escapes              | relative to the note, `~/...` and absolute paths too                              |
 | `![alt](https://example.org/pic.png)`                                                     | downloaded with curl, at most 10 s and 20 MB, http(s) only, redirects included    |
 | `![[pic.png]]`, `![[pic.png\|300]]`, `![alt](pic.png)` in a note inside an Obsidian vault | found by name in the vault: its attachments folder, its root, then anywhere in it |
@@ -189,6 +191,21 @@ Start with `:checkhealth render-markdown-images`.
 - Files are handed to the terminal as temporary copies named `tty-graphics-protocol`, in your temp directory,
   which the terminal deletes after reading. Only this plugin's own image ids are deleted on exit.
 
+## Commands
+
+`:RenderMarkdownImages <name>` is the plugin's one command, with these names (completed with `<Tab>`):
+
+| Command                         |                                                                           |
+| ------------------------------- | ------------------------------------------------------------------------- |
+| `:RenderMarkdownImages toggle`  | hide the images of every markdown buffer, or show them if they are hidden |
+| `:RenderMarkdownImages enable`  | show them                                                                 |
+| `:RenderMarkdownImages disable` | hide them                                                                 |
+
+While images are hidden nothing is looked for, fetched or drawn, and the sources are shown as they are (in `replace`
+mode too). What was fetched and converted is kept, so showing them again is quick and sends nothing to the terminal a
+second time. Images start shown, and the switch is not saved: it is for the session. `:checkhealth` says when they are
+hidden. To bind it: `vim.keymap.set("n", "<leader>ui", "<cmd>RenderMarkdownImages toggle<cr>")`. From Lua, see below.
+
 ## Lua API
 
 ```lua
@@ -197,6 +214,10 @@ local rmi = require("render-markdown-images")
 rmi.setup(opts)          -- see Options; raises on a bad option and keeps the previous one
 rmi.handlers()           -- the table for render-markdown.nvim's `custom_handlers`
 rmi.set_download_fn(fn)  -- take over downloads: fn(url, output_path, callback) -> boolean
+rmi.is_enabled()         -- whether images are shown (true until they are switched off)
+rmi.enable()             -- show images, in every buffer
+rmi.disable()            -- hide them, in every buffer
+rmi.toggle()             -- switch; returns whether images are shown now
 ```
 
 `set_download_fn`: `fn` is called before curl for each URL. To take the job it returns `true` and, when done, calls

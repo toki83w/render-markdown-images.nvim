@@ -16,6 +16,7 @@ Health check                                   |render-markdown-images-health|
 Troubleshooting                       |render-markdown-images-troubleshooting|
 Limitations                               |render-markdown-images-limitations|
 Privacy and security                          |render-markdown-images-privacy|
+Commands                                    |render-markdown-images-commands|
 Lua API                                           |render-markdown-images-api|
 Highlight groups                           |render-markdown-images-highlights|
 Credits and licences                          |render-markdown-images-credits|
@@ -66,8 +67,9 @@ REQUIREMENTS                             *render-markdown-images-requirements*
 ==============================================================================
 INSTALLATION                             *render-markdown-images-installation*
 
-The plugin has no commands and nothing to enable: it is a set of handlers,
-registered with render-markdown.nvim.  With lazy.nvim: >lua
+The plugin has nothing to enable: it is a set of handlers, registered with
+render-markdown.nvim.  (Its one command, |:RenderMarkdownImages|, only
+switches the images off and on.)  With lazy.nvim: >lua
 
     {
       "MeanderingProgrammer/render-markdown.nvim",
@@ -80,8 +82,9 @@ registered with render-markdown.nvim.  With lazy.nvim: >lua
     }
 <
 |render-markdown-images.setup()| is only needed to change options;
-|render-markdown-images.handlers()| works without it.  To turn the plugin off,
-leave `custom_handlers` out.
+|render-markdown-images.handlers()| works without it.  To turn the plugin off
+for good, leave `custom_handlers` out; to switch images off and on while
+Neovim runs, see |render-markdown-images-commands|.
 
 If you already have custom handlers, merge: the table has one entry,
 `markdown`, with `extends = true`, so render-markdown's own markdown rendering
@@ -298,6 +301,39 @@ PRIVACY AND SECURITY                          *render-markdown-images-privacy*
   Neovim in the same terminal are not touched.
 
 ==============================================================================
+COMMANDS                                    *render-markdown-images-commands*
+
+                                                       *:RenderMarkdownImages*
+:RenderMarkdownImages {name}
+        The plugin's one command, with these names (completed with <Tab>):
+
+                                                *:RenderMarkdownImages-toggle*
+:RenderMarkdownImages toggle
+        Hide the images of every markdown buffer, or show them if they are
+        hidden.
+
+                                                *:RenderMarkdownImages-enable*
+:RenderMarkdownImages enable
+        Show the images.
+
+                                               *:RenderMarkdownImages-disable*
+:RenderMarkdownImages disable
+        Hide the images.
+
+        While images are hidden nothing is looked for, fetched or drawn, and
+        the sources are shown as they are ("replace" mode too).  What was
+        fetched and converted is kept, so showing them again is quick and
+        sends nothing to the terminal a second time.  Images start shown, and
+        the switch is not saved: it is for the session.
+        |render-markdown-images-health| says when they are hidden.  To bind
+        it: >lua
+
+            vim.keymap.set("n", "<leader>ui",
+              "<cmd>RenderMarkdownImages toggle<cr>")
+<
+        From Lua: |render-markdown-images.toggle()|.
+
+==============================================================================
 LUA API                                           *render-markdown-images-api*
 
                                               *render-markdown-images.setup()*
@@ -318,6 +354,28 @@ require("render-markdown-images").set_download_fn({fn})
         returns `true` and, when done, calls `callback(true)` after writing
         the image to {output_path} (or `callback(false)`); returning `false`
         leaves the URL to curl.  Pass `nil` to remove it.
+
+                                         *render-markdown-images.is_enabled()*
+require("render-markdown-images").is_enabled()
+        Whether images are shown.  They are until
+        |render-markdown-images.disable()| or
+        |render-markdown-images.toggle()|.  This is not an option and is not
+        saved.
+
+                                             *render-markdown-images.enable()*
+require("render-markdown-images").enable()
+        Show images again, in every buffer.  What was fetched and converted
+        is still there, so it is quick.
+
+                                            *render-markdown-images.disable()*
+require("render-markdown-images").disable()
+        Hide the images of every buffer, and look for none until
+        |render-markdown-images.enable()|: the sources are shown as they are.
+
+                                             *render-markdown-images.toggle()*
+require("render-markdown-images").toggle()
+        Switch between the two.  Returns whether images are shown now.  This
+        is what |:RenderMarkdownImages-toggle| calls.
 
 ==============================================================================
 HIGHLIGHT GROUPS                           *render-markdown-images-highlights*

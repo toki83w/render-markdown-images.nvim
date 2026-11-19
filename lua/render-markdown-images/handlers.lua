@@ -308,7 +308,19 @@ end
 function M.parse(ctx)
   local config = active(ctx)
   if not config then return {} end
-  require("render-markdown-images.lifecycle").ensure()
+  local lifecycle = require "render-markdown-images.lifecycle"
+  lifecycle.ensure()
+  lifecycle.attach(ctx.buf)
+  if not lifecycle.is_enabled() then
+    -- Switched off: nothing is looked for, fetched or drawn, and what an earlier render drew is not drawn again.
+    -- The placements it used are let go of, and deleted in a moment.
+    if ctx.last then
+      lifecycle.drawn(ctx.buf, false)
+      require("render-markdown-images.marks").forget_buf(ctx.buf)
+      lifecycle.schedule_prune()
+    end
+    return {}
+  end
   local context = request_context(ctx.buf)
   local ready, shared = collector(context)
   collect_images(ctx, config, context, ready)

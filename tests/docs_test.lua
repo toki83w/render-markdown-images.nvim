@@ -74,7 +74,11 @@ h.test("every public function is documented in both", function()
     if type(value) == "function" then public[#public + 1] = name end
   end
   table.sort(public)
-  h.assert_eq(public, { "handlers", "set_download_fn", "setup" }, "the public API (add new functions to the docs)")
+  h.assert_eq(
+    public,
+    { "disable", "enable", "handlers", "is_enabled", "set_download_fn", "setup", "toggle" },
+    "the public API (add new functions to the docs)"
+  )
   for _, name in ipairs(public) do
     h.assert_eq(readme:find("rmi." .. name, 1, true) ~= nil, true, name .. " in the README")
     h.assert_eq(
@@ -212,6 +216,27 @@ h.test("the demos the README names exist", function()
   for _, path in ipairs { "scripts/demo_below.lua", "scripts/demo_below.md", "tests/fixtures/vault/notes/note.md" } do
     h.assert_eq(vim.uv.fs_stat(h.root .. "/" .. path) ~= nil, true, path)
     h.assert_eq(readme:find(path, 1, true) ~= nil, true, path .. " is in the README")
+  end
+end)
+
+h.test("every command is documented in both, and is defined by the plugin directory", function()
+  local plugin = read "plugin/render-markdown-images.lua"
+  local defined = {}
+  for name in plugin:gmatch 'nvim_create_user_command%("(%w+)"' do
+    defined[#defined + 1] = name
+  end
+  table.sort(defined)
+  h.assert_eq(defined, { "RenderMarkdownImages" }, "the commands (add new ones to the docs)")
+  for _, name in ipairs(defined) do
+    h.assert_eq(readme:find("`:" .. name .. " <name>`", 1, true) ~= nil, true, name .. " in the README")
+    h.assert_eq(help:find("*:" .. name .. "*", 1, true) ~= nil, true, name .. " tagged in the help")
+  end
+  -- And every name it takes.
+  local names = require("render-markdown-images.command").names()
+  h.assert_eq(names, { "disable", "enable", "toggle" }, "the names (add new ones to the docs)")
+  for _, sub in ipairs(names) do
+    h.assert_eq(readme:find("`:RenderMarkdownImages " .. sub .. "`", 1, true) ~= nil, true, sub .. " in the README")
+    h.assert_eq(help:find("*:RenderMarkdownImages-" .. sub .. "*", 1, true) ~= nil, true, sub .. " tagged in the help")
   end
 end)
 
